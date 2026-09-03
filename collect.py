@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AI Limits Tracker - Collector Engine
+AI Usage Bar - Collector Engine
 Discovers all installed AI providers on Omarchy and extracts quota/rate limit information.
 """
 
@@ -322,7 +322,7 @@ def collect_all_data() -> Dict[str, Any]:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="AI Limits Collector")
+    parser = argparse.ArgumentParser(description="AI Usage Bar Collector")
     parser.add_argument("--refresh", action="store_true", help="Force update before collecting")
     parser.add_argument("--json", action="store_true", default=True, help="Emit JSON output")
     args = parser.parse_args()

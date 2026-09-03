@@ -1,11 +1,11 @@
 {
   "schemaVersion": 1,
   "id": "gladimdim.ai-limits",
-  "name": "AI Limits Tracker",
+  "name": "AI Usage Bar",
   "version": "1.1.0",
   "author": "Dmytro Gladkyi",
   "license": "MIT",
-  "description": "Old-school ASCII progress bar dock widget for tracking AI provider quotas and rate limits (Claude, Grok, Antigravity, etc.) with configurable multi-line tracker.",
+  "description": "Claude Code, Grok, Codex and Antigravity usage, quota and rate limit tracking as old-school ASCII progress bars in your Omarchy dock.",
   "kinds": [
     "bar-widget"
   ],
@@ -13,17 +13,20 @@
     "barWidget": "Widget.qml"
   },
   "barWidget": {
-    "displayName": "AI Limits Tracker",
-    "description": "Old-school ASCII progress bars for AI rate limits in the dock",
+    "displayName": "AI Usage Bar",
+    "description": "Track AI provider usage, quotas and rate limits as ASCII progress bars in the dock",
     "category": "AI",
     "allowMultiple": false,
     "defaultSection": "right",
     "aliases": [
+      "ai-usage",
       "ai-limits",
+      "claude-usage",
       "ai-tracker",
-      "ai-quota",
       "limits",
       "quota",
+      "tokens",
+      "rate-limits",
       "ascii-bar"
     ],
     "defaults": {

@@ -443,10 +443,10 @@ BarWidget {
 
   function tooltipContent() {
     var items = trackedItems
-    if (!items || items.length === 0) return "AI Limits Tracker\n(Click to configure)"
+    if (!items || items.length === 0) return "AI Usage Bar\n(Click to configure)"
     var lines = root.activeEvent !== null
       ? [root.activeEvent.text, ""]
-      : ["AI Limits Tracker (Click for details)"]
+      : ["AI Usage Bar (Click for details)"]
     for (var i = 0; i < items.length; i++) {
       var item = items[i]
       var rText = item.resetsFormatted ? " (" + item.resetsFormatted + ")" : ""
@@ -568,7 +568,7 @@ BarWidget {
       Text {
         visible: root.trackedItems.length === 0
         anchors.centerIn: parent
-        text: "[ AI Limits ]"
+        text: "[ AI Usage ]"
         color: root.muted
         font.family: root.fontFamily
         font.pixelSize: 10
@@ -1038,7 +1038,7 @@ BarWidget {
             Layout.fillWidth: true
 
             Text {
-              text: "AI Limits & Quotas"
+              text: "AI Usage & Limits"
               color: root.foreground
               font.family: root.fontFamily
               font.pixelSize: Style.font.subtitle

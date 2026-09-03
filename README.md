@@ -1,9 +1,9 @@
-# Omarchy AI Limits Tracker Plugin 🤖📊
+# AI Usage Bar — Omarchy Plugin 🤖📊
 
 [![Omarchy Plugin](https://img.shields.io/badge/omarchy-plugin-blue.svg)](https://github.com/omacom/omarchy)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-An old-school ASCII progress bar widget for the [Omarchy](https://github.com/omacom/omarchy) dock that tracks rate limits and usage allowances for your installed AI providers in real-time.
+An old-school ASCII progress bar widget for the [Omarchy](https://github.com/omacom/omarchy) dock that tracks usage, quotas and rate limits for your installed AI providers — Claude Code, Grok, Codex, Antigravity and more — in real time.
 
 ```text
 +-------------------------------------------------------------+
@@ -12,7 +12,7 @@ An old-school ASCII progress bar widget for the [Omarchy](https://github.com/oma
 +-------------------------------------------------------------+
 ```
 
-![AI Limits Tracker Preview](preview.png)
+![AI Usage Bar Preview](preview.png)
 
 ---
 
