@@ -266,6 +266,24 @@ BarWidget {
     return lines.join("\n")
   }
 
+  function open() {
+    popupOpen = true
+    triggerRefresh(false)
+  }
+
+  function close() {
+    popupOpen = false
+  }
+
+  function toggle() {
+    if (popupOpen) close()
+    else open()
+  }
+
+  function closeForPopoutSwitch() {
+    close()
+  }
+
   function triggerPress(btn) {
     if (btn === Qt.RightButton) {
       cycleStyle()
@@ -275,8 +293,7 @@ BarWidget {
       triggerRefresh(true)
       return
     }
-    popupOpen = !popupOpen
-    if (popupOpen) triggerRefresh(false)
+    toggle()
   }
 
   // ------------------------------------------------------------- Dock Bar UI
@@ -493,6 +510,11 @@ BarWidget {
     owner: root
     bar: root.bar
     open: root.popupOpen
+    onOpenChanged: {
+      if (root.popupOpen !== open) {
+        root.popupOpen = open
+      }
+    }
     focusTarget: keyCatcher
     contentWidth: panel.fittedContentWidth(Style.space(480))
     contentHeight: panel.fittedContentHeight(Style.space(540), Style.space(620))
@@ -501,7 +523,7 @@ BarWidget {
       id: keyCatcher
       anchors.fill: parent
 
-      onCloseRequested: root.popupOpen = false
+      onCloseRequested: root.close()
       onTextKey: function(t) {
         if (t === "r" || t === "R") root.triggerRefresh(true)
         if (t === "1") root.activeTab = 0
@@ -601,7 +623,7 @@ BarWidget {
               anchors.fill: parent
               hoverEnabled: true
               cursorShape: Qt.PointingHandCursor
-              onClicked: root.popupOpen = false
+              onClicked: root.close()
             }
           }
         }
@@ -1427,19 +1449,22 @@ BarWidget {
     target: "gladimdim.ai-limits"
 
     function open(): string {
-      root.popupOpen = true
-      root.triggerRefresh(false)
+      root.open()
       return "ok"
     }
 
     function close(): string {
-      root.popupOpen = false
+      root.close()
       return "ok"
     }
 
     function toggle(): string {
-      root.popupOpen = !root.popupOpen
-      if (root.popupOpen) root.triggerRefresh(false)
+      root.toggle()
+      return "ok"
+    }
+
+    function click(button: int): string {
+      root.triggerPress(button)
       return "ok"
     }
 
