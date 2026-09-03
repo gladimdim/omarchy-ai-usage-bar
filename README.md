@@ -52,6 +52,15 @@ An old-school ASCII progress bar widget for the [Omarchy](https://github.com/oma
 
 ---
 
+## 📦 Requirements
+
+- **Omarchy** with the Quickshell-based shell (plugin `schemaVersion` 1).
+- **`python3`** on `PATH`. The collector (`collect.py`) uses only the standard library — no `pip` packages, no virtualenv.
+
+It makes **no network requests**. Everything it shows is read from the usage JSON Omarchy's own agent integrations already write to `~/.local/state/omarchy/agents/usage/`. To keep that fresh it may run Omarchy's local updater (`~/.config/omarchy/agents/update` or `/usr/share/omarchy/bin/omarchy-agent-usage-update`) and, when the Antigravity usage plugin is installed, that plugin's own scanner — refreshing `antigravity.json` in the directory above. Providers you have not installed simply do not appear.
+
+---
+
 ## 🚀 Installation
 
 ### 1. Clone the repository
@@ -96,6 +105,30 @@ Or manually add it to your `~/.config/omarchy/shell.json` in `bar.layout.right`:
 ```bash
 omarchy restart shell
 ```
+
+> Use `omarchy restart shell`, **not** `omarchy refresh shell` — the latter resets `~/.config/omarchy/shell.json` to Omarchy defaults and discards your bar layout and plugin settings.
+
+---
+
+## 🗑️ Removal
+
+```bash
+omarchy plugin remove gladimdim.ai-limits
+```
+
+That one command does the whole job: it disables the widget (dropping it from your bar layout), unlinks the symlink — or deletes the directory if you cloned straight into `~/.config/omarchy/plugins/` — and rescans the shell. It asks for confirmation first; pass `--yes` to skip the prompt.
+
+To take it out by hand instead:
+
+```bash
+omarchy plugin disable gladimdim.ai-limits
+rm ~/.config/omarchy/plugins/gladimdim.ai-limits
+omarchy restart shell
+```
+
+The plugin's settings live inside its own entry in `~/.config/omarchy/shell.json`, which disabling removes. Delete your clone (`rm -rf ~/Github/omarchy-ai-limits-plugin`) if you want the source gone too.
+
+The only file the collector writes outside that entry is a refreshed copy of Omarchy's own Antigravity usage cache, `~/.local/state/omarchy/agents/usage/antigravity.json`, and only when the [Antigravity usage plugin](https://github.com/jesseburlamaque/omarchy-antigravity-usage) is installed to produce it. That cache belongs to Omarchy's shared agent-usage state rather than to this plugin, so removal leaves it in place; delete it yourself if you want it gone.
 
 ---
 
