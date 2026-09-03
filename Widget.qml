@@ -10,6 +10,8 @@ BarWidget {
   id: root
   moduleName: "gladimdim.ai-limits"
 
+  property bool pressable: true
+  property bool interactive: true
   property bool popupOpen: false
   property int activeTab: 0 // 0: Dock Tracker, 1: All Providers, 2: Style & Options
   property bool refreshing: false
@@ -140,12 +142,12 @@ BarWidget {
   }
 
   function isLimitTracked(limitId) {
-    var trackedList = Array.isArray(trackedSettings) ? trackedSettings : []
+    var trackedList = root.toList(root.trackedSettings, [])
     return trackedList.indexOf(limitId) !== -1
   }
 
   function toggleTrackLimit(limitId) {
-    var trackedList = Array.isArray(trackedSettings) ? trackedSettings.slice(0, 2) : []
+    var trackedList = root.toList(root.trackedSettings, []).slice(0, 2)
     var idx = trackedList.indexOf(limitId)
 
     if (idx !== -1) {
@@ -153,12 +155,14 @@ BarWidget {
       root.selectionWarning = ""
     } else {
       if (trackedList.length >= 2) {
-        root.selectionWarning = "Maximum 2 limits can be tracked in the dock. Uncheck one first."
+        trackedList.shift()
+        trackedList.push(limitId)
+        root.selectionWarning = "Max 2 tracked: replaced oldest selection."
         warningTimer.restart()
-        return
+      } else {
+        trackedList.push(limitId)
+        root.selectionWarning = ""
       }
-      trackedList.push(limitId)
-      root.selectionWarning = ""
     }
 
     saveSetting("tracked", trackedList.slice(0, 2))
@@ -285,7 +289,14 @@ BarWidget {
     implicitWidth: Math.max(36, dockContent.implicitWidth + Style.space(16))
     implicitHeight: root.barSize
 
+    property bool pressable: true
+    property bool interactive: true
     property var registeredBar: null
+
+    function triggerPress(button) {
+      root.triggerPress(button)
+    }
+
     function syncClickRegistration() {
       if (registeredBar && registeredBar.unregisterClickTarget) registeredBar.unregisterClickTarget(dockItem)
       registeredBar = root.bar
@@ -876,7 +887,6 @@ BarWidget {
                   Layout.fillWidth: true
                   implicitHeight: rowLayout.implicitHeight + Style.space(16)
                   radius: root.radiusVal
-                  opacity: (!root.isLimitTracked(modelData.id) && root.trackedCount >= 2) ? 0.6 : 1.0
                   color: root.isLimitTracked(modelData.id)
                     ? Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.12)
                     : (rowHover.containsMouse ? root.cardHover : root.cardBg)
@@ -897,9 +907,7 @@ BarWidget {
                       height: Style.space(20)
                       radius: root.radiusVal
                       color: root.isLimitTracked(modelData.id) ? root.accent : "transparent"
-                      border.color: root.isLimitTracked(modelData.id)
-                        ? root.accent
-                        : (root.trackedCount >= 2 ? root.cardBorder : root.muted)
+                      border.color: root.isLimitTracked(modelData.id) ? root.accent : root.muted
                       border.width: 1.5
 
                       Text {
@@ -909,15 +917,6 @@ BarWidget {
                         font.bold: true
                         font.pixelSize: 12
                         visible: root.isLimitTracked(modelData.id)
-                      }
-
-                      Text {
-                        anchors.centerIn: parent
-                        text: "−"
-                        color: root.muted
-                        font.bold: true
-                        font.pixelSize: 12
-                        visible: !root.isLimitTracked(modelData.id) && root.trackedCount >= 2
                       }
                     }
 
@@ -976,17 +975,8 @@ BarWidget {
                     id: rowHover
                     anchors.fill: parent
                     hoverEnabled: true
-                    cursorShape: (!root.isLimitTracked(modelData.id) && root.trackedCount >= 2)
-                      ? Qt.ForbiddenCursor
-                      : Qt.PointingHandCursor
-                    onClicked: {
-                      if (!root.isLimitTracked(modelData.id) && root.trackedCount >= 2) {
-                        root.selectionWarning = "Maximum 2 limits can be tracked in the dock. Uncheck one first."
-                        warningTimer.restart()
-                        return
-                      }
-                      root.toggleTrackLimit(modelData.id)
-                    }
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.toggleTrackLimit(modelData.id)
                   }
                 }
               }
@@ -1123,18 +1113,13 @@ BarWidget {
                               width: Style.space(90)
                               height: Style.space(22)
                               radius: root.radiusVal
-                              opacity: (!root.isLimitTracked(modelData.id) && root.trackedCount >= 2) ? 0.5 : 1.0
                               color: root.isLimitTracked(modelData.id) ? root.accent : root.cardBg
-                              border.color: root.isLimitTracked(modelData.id) ? root.accent : (root.trackedCount >= 2 ? root.muted : root.accent)
+                              border.color: root.accent
 
                               Text {
                                 anchors.centerIn: parent
-                                text: root.isLimitTracked(modelData.id)
-                                  ? "★ In Dock"
-                                  : (root.trackedCount >= 2 ? "Max (2/2)" : "+ Track")
-                                color: root.isLimitTracked(modelData.id)
-                                  ? "#000000"
-                                  : (root.trackedCount >= 2 ? root.muted : root.foreground)
+                                text: root.isLimitTracked(modelData.id) ? "★ In Dock" : "+ Track"
+                                color: root.isLimitTracked(modelData.id) ? "#000000" : root.foreground
                                 font.family: root.fontFamily
                                 font.pixelSize: 10
                                 font.bold: true
@@ -1142,17 +1127,8 @@ BarWidget {
 
                               MouseArea {
                                 anchors.fill: parent
-                                cursorShape: (!root.isLimitTracked(modelData.id) && root.trackedCount >= 2)
-                                  ? Qt.ForbiddenCursor
-                                  : Qt.PointingHandCursor
-                                onClicked: {
-                                  if (!root.isLimitTracked(modelData.id) && root.trackedCount >= 2) {
-                                    root.selectionWarning = "Maximum 2 limits can be tracked in the dock. Uncheck one first."
-                                    warningTimer.restart()
-                                    return
-                                  }
-                                  root.toggleTrackLimit(modelData.id)
-                                }
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: root.toggleTrackLimit(modelData.id)
                               }
                             }
                           }
@@ -1469,6 +1445,11 @@ BarWidget {
 
     function refresh(): string {
       root.triggerRefresh(true)
+      return "ok"
+    }
+
+    function toggleLimit(id: string): string {
+      root.toggleTrackLimit(id)
       return "ok"
     }
 
