@@ -31,7 +31,7 @@ PROVIDER_COLORS = {
 PROVIDER_SHORT_NAMES = {
     "claude": "Claude",
     "grok": "Grok",
-    "antigravity": "Antigrav",
+    "antigravity": "AGY",
     "codex": "Codex",
     "fireworks": "Firewks",
     "opencode": "OpenCd",
@@ -103,12 +103,62 @@ def make_short_label(provider_id: str, limit_title: str) -> str:
     return p_short
 
 
+def format_tokens(count: Optional[int]) -> str:
+    if not count:
+        return "0"
+    if count >= 1_000_000_000:
+        return f"{count / 1_000_000_000:.1f}B"
+    if count >= 1_000_000:
+        return f"{count / 1_000_000:.1f}M"
+    if count >= 1_000:
+        return f"{count / 1_000:.1f}k"
+    return str(count)
+
+
+def format_relative_past(iso_str: Optional[str]) -> str:
+    if not iso_str:
+        return ""
+    try:
+        clean_str = iso_str.replace("Z", "+00:00")
+        target_dt = dt.datetime.fromisoformat(clean_str)
+        now_dt = dt.datetime.now(dt.timezone.utc)
+        diff = now_dt - target_dt
+        secs = int(diff.total_seconds())
+        if secs < 60:
+            return "just now"
+        mins = secs // 60
+        if mins < 60:
+            return f"{mins}m ago"
+        hours = mins // 60
+        if hours < 24:
+            return f"{hours}h ago"
+        days = hours // 24
+        return f"{days}d ago"
+    except Exception:
+        return ""
+
+
 def generate_ascii_bar(percent: float, length: int = 16, style: str = "blocks") -> str:
     clamped = max(0.0, min(1.0, percent))
     fill_count = int(round(clamped * length))
     empty_count = length - fill_count
 
-    if style == "ascii":
+    if style == "subblocks":
+        eighths = int(round(clamped * length * 8))
+        full = eighths // 8
+        rem = eighths % 8
+        partials = ["", "▏", "▎", "▍", "▌", "▋", "▊", "▉"]
+        p_char = partials[rem] if (rem > 0 and full < length) else ""
+        empty = max(0, length - full - (1 if p_char else 0))
+        return "[" + ("█" * full) + p_char + ("░" * empty) + "]"
+
+    elif style == "dots":
+        return "[" + ("●" * fill_count) + ("○" * empty_count) + "]"
+
+    elif style == "pipes":
+        return "[" + ("|" * fill_count) + ("." * empty_count) + "]"
+
+    elif style == "ascii":
         if fill_count == 0:
             body = " " * length
         elif fill_count == length:
@@ -254,7 +304,9 @@ def collect_all_data() -> Dict[str, Any]:
             "todayPrompts": data.get("todayPrompts", 0),
             "todaySessions": data.get("todaySessions", 0),
             "todayTotalTokens": data.get("todayTotalTokens", 0),
+            "todayTokensFormatted": format_tokens(data.get("todayTotalTokens", 0)),
             "updatedAt": data.get("updatedAt", ""),
+            "updatedAgo": format_relative_past(data.get("updatedAt", "")),
         }
         providers.append(provider_obj)
 

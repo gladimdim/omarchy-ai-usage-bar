@@ -7,8 +7,8 @@ An old-school ASCII progress bar widget for the [Omarchy](https://github.com/oma
 
 ```text
 +-------------------------------------------------------------+
-| AGY Think [████████████████] 100% 16h43m                    |
-| Claude 5h [███████████████░]  92%  2h43m                    |
+| Claude 5h [████████████████] 100%   4m                      |
+| Grok Wk   [████████████████] 100% 1d4h                      |
 +-------------------------------------------------------------+
 ```
 
@@ -35,8 +35,15 @@ An old-school ASCII progress bar widget for the [Omarchy](https://github.com/oma
 - **🎛️ Interactive Popup Dashboard**:
   - **Live Dock Preview**: Test and view your dock layout in real-time.
   - **Limit Selector**: Easily toggle and select which 2 limits appear in the dock.
-  - **All Providers Overview**: Detailed status cards with tokens, sessions, reset times, and raw allowance numbers.
+  - **Collapsible Provider Panels**: Every limit is grouped under its provider. Click a provider header (or press `e` to fold/unfold them all) to collapse the group down to a single row showing its headline limit and how many of its limits are pinned to the dock.
+  - **Arrange Each Panel**: Nudge a limit up or down with the `▲` / `▼` buttons on its row. The order is yours and is remembered (`limitOrder`), and the row you put **first becomes the provider's headline limit** — the one its header reports when the panel is folded, on both tabs. A marker down the left edge shows which row that is. Limits you never move stay in the collector's own order (busiest first), below the ones you arranged.
+  - **All Providers Overview**: Detailed status cards with tokens, sessions, reset times, and raw allowance numbers — also grouped into collapsible panels.
   - **Style Customizer**: Interactive buttons to change bar styles, bar length (8 to 32 characters), and toggle labels, percentages, and reset countdowns.
+- **📣 Depleted / Reset Announcements**:
+  - When a limit hits 100%, a scrolling `<marquee>`-style banner announces it with a randomly picked quip (*"Ooops, tokens for Claude Code Session (5-hour) depleted!"*) over a pulsing red background.
+  - When a limit rolls over into a fresh window, the same banner celebrates it with a sliding rainbow.
+  - Each announcement runs for 15 seconds or until you click it; extras queue up behind it (the `✕ +N` badge shows how many).
+  - While the popup is closed the **dock bar itself animates**: the ASCII bar of a depleted limit turns into a Larson scanner sweeping back and forth in pulsing red (with an occasional nudge sideways), and a limit that just reset plays a refill wave in cycling rainbow colours — all in your chosen bar style.
 - **🖱️ Instant Mouse Controls**:
   - **Left Click**: Open / close full configuration dashboard.
   - **Right Click**: Instantly cycle between ASCII bar styles.
@@ -99,6 +106,7 @@ All settings can be tweaked directly in `~/.config/omarchy/shell.json` or via th
 | Setting | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
 | `tracked` | `array` | `["claude:session-5-hour", "grok:weekly"]` | Array of limit IDs to display in dock (up to 2). |
+| `limitOrder` | `array` | `[]` | Limit IDs in the order you arranged them inside their provider panel. Only the providers you rearranged appear; unlisted limits keep the collector's order below them. A provider's **first** ID here is its headline limit. |
 | `barStyle` | `string` | `"blocks"` | ASCII style: `blocks`, `shaded`, `ascii`, `retro`, `squares`, `braille`. |
 | `barLength` | `integer` | `16` | Length of progress bar body in characters (8–32). |
 | `showLabel` | `boolean` | `true` | Show short provider label (e.g. `Claude 5h`, `AGY Think`). |
@@ -128,6 +136,9 @@ omarchy-shell gladimdim.ai-limits nextStyle
 
 # Force refresh data from agent logs
 omarchy-shell gladimdim.ai-limits refresh
+
+# Preview an announcement banner: depleted or reset
+omarchy-shell gladimdim.ai-limits demoEvent depleted
 
 # Get current status and active limits JSON
 omarchy-shell gladimdim.ai-limits debugInfo

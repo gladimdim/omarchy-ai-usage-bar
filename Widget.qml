@@ -58,6 +58,15 @@ BarWidget {
   readonly property bool coloredBars: Boolean(root.settings && root.settings.coloredBars !== undefined ? root.settings.coloredBars : true)
   readonly property int refreshIntervalSec: Math.max(10, Number(root.settings && root.settings.refreshIntervalSec !== undefined ? root.settings.refreshIntervalSec : 60))
 
+  // The order the user arranged the limits into, as limit ids. Only a provider
+  // whose rows have been nudged appears here; everything unlisted keeps the
+  // collector's order (percent, descending) behind whatever was arranged.
+  // Position within a provider is what matters — the first of its ids is that
+  // provider's headline limit, the one the folded panel header reports.
+  readonly property var limitOrderSettings: root.toList(
+    root.settings && root.settings.limitOrder !== undefined ? root.settings.limitOrder : [],
+    [])
+
   // Data state
   property var limitsData: ({ "providers": [], "allLimits": [] })
   property var providers: limitsData && limitsData.providers ? limitsData.providers : []
@@ -110,6 +119,183 @@ BarWidget {
   onLimitsDataChanged: updateTrackedItems()
   onAllLimitsChanged: updateTrackedItems()
   onTrackedSettingsChanged: updateTrackedItems()
+
+  // ---------------------------------------------- Provider grouping / collapse
+  // Limits grouped by their provider, in the order the user arranged them —
+  // `limitOrder` first, then everything it does not mention in the collector's
+  // own order. Each group also names its `topLimit`: the row sitting first, which
+  // is what the header shows for the whole provider.
+  readonly property var groupedLimits: {
+    var groups = []
+    var byId = ({})
+    var limits = root.allLimits
+
+    // id -> arranged position. Compared only within one provider, so the
+    // absolute numbers never matter, just their relative order.
+    var rank = ({})
+    var order = root.limitOrderSettings
+    for (var o = 0; o < order.length; o++) rank[String(order[o])] = o
+
+    for (var i = 0; i < limits.length; i++) {
+      var lim = limits[i]
+      if (!lim) continue
+      var pid = lim.providerId || "unknown"
+      var group = byId[pid]
+      if (!group) {
+        group = {
+          "providerId": pid,
+          "providerName": lim.providerName || pid,
+          "color": lim.color || root.accent,
+          "peakPercent": 0.0,
+          "topLimit": null,
+          "rows": [],
+          "limits": []
+        }
+        byId[pid] = group
+        groups.push(group)
+      }
+      // `seq` keeps the collector's order as the tie-break, so unarranged rows
+      // do not shuffle on a sort that makes no promise about equal elements.
+      group.rows.push({ "lim": lim, "seq": group.rows.length })
+      if (Number(lim.percent || 0) > group.peakPercent) group.peakPercent = Number(lim.percent || 0)
+    }
+
+    for (var g = 0; g < groups.length; g++) {
+      var rows = groups[g].rows
+      rows.sort(function (a, b) {
+        var ra = rank[a.lim.id]
+        var rb = rank[b.lim.id]
+        var hasA = ra !== undefined
+        var hasB = rb !== undefined
+        if (hasA && hasB) return ra - rb
+        if (hasA) return -1   // arranged rows sit above unarranged ones
+        if (hasB) return 1
+        return a.seq - b.seq
+      })
+      var ordered = []
+      for (var r = 0; r < rows.length; r++) ordered.push(rows[r].lim)
+      groups[g].limits = ordered
+      groups[g].topLimit = ordered.length > 0 ? ordered[0] : null
+      groups[g].rows = []
+    }
+
+    return groups
+  }
+
+  // providerId -> true when the panel is folded shut. Replaced wholesale on each
+  // change so bindings that read it re-evaluate.
+  property var collapsedProviders: ({})
+
+  function isProviderCollapsed(providerId) {
+    return root.collapsedProviders[providerId] === true
+  }
+
+  function toggleProviderCollapsed(providerId) {
+    var next = ({})
+    for (var k in root.collapsedProviders) next[k] = root.collapsedProviders[k]
+    next[providerId] = !(next[providerId] === true)
+    root.collapsedProviders = next
+  }
+
+  function allProviderIds() {
+    var ids = []
+    var seen = ({})
+    var groups = root.groupedLimits
+    for (var i = 0; i < groups.length; i++) {
+      seen[groups[i].providerId] = true
+      ids.push(groups[i].providerId)
+    }
+    var provs = root.providers
+    for (var j = 0; j < provs.length; j++) {
+      if (provs[j] && !seen[provs[j].id]) {
+        seen[provs[j].id] = true
+        ids.push(provs[j].id)
+      }
+    }
+    return ids
+  }
+
+  function anyProviderCollapsed() {
+    var ids = root.allProviderIds()
+    for (var i = 0; i < ids.length; i++) if (root.collapsedProviders[ids[i]] === true) return true
+    return false
+  }
+
+  function setAllProvidersCollapsed(collapsed) {
+    var next = ({})
+    if (collapsed) {
+      var ids = root.allProviderIds()
+      for (var i = 0; i < ids.length; i++) next[ids[i]] = true
+    }
+    root.collapsedProviders = next
+  }
+
+  function toggleAllProviders() {
+    root.setAllProvidersCollapsed(!root.anyProviderCollapsed())
+  }
+
+  // The limit standing first in a provider's panel — the one that speaks for the
+  // provider in its header. Null for a provider with nothing to report.
+  function headLimitOf(providerId) {
+    var groups = root.groupedLimits
+    for (var i = 0; i < groups.length; i++) {
+      if (groups[i].providerId === providerId) return groups[i].topLimit
+    }
+    return null
+  }
+
+  // Nudge a limit one row up (delta -1) or down (+1) inside its own provider.
+  // Rows never cross providers: the panels are the grouping, and moving between
+  // them would mean re-labelling the limit, not re-ordering it.
+  function moveLimit(providerId, limitId, delta) {
+    var groups = root.groupedLimits
+    var lims = null
+    for (var g = 0; g < groups.length; g++) {
+      if (groups[g].providerId === providerId) { lims = groups[g].limits; break }
+    }
+    if (!lims) return
+
+    var ids = []
+    for (var i = 0; i < lims.length; i++) ids.push(String(lims[i].id))
+    var from = ids.indexOf(String(limitId))
+    var to = from + delta
+    if (from === -1 || to < 0 || to >= ids.length) return
+    ids.splice(to, 0, ids.splice(from, 1)[0])
+
+    // Persist this provider's whole order and leave every other provider's
+    // saved ids alone — one nudge must not re-arrange a panel nobody touched.
+    var next = []
+    var saved = root.toList(root.limitOrderSettings, [])
+    for (var s = 0; s < saved.length; s++) {
+      var sid = String(saved[s])
+      if (sid.indexOf(providerId + ":") !== 0) next.push(sid)
+    }
+    for (var k = 0; k < ids.length; k++) next.push(ids[k])
+
+    root.saveSetting("limitOrder", next)
+  }
+
+  // Highest usage among a provider's limits, for the collapsed summary.
+  function peakPercentOf(limits) {
+    var list = root.toList(limits, [])
+    var peak = 0.0
+    for (var i = 0; i < list.length; i++) {
+      var v = Number(list[i] && list[i].percent || 0)
+      if (v > peak) peak = v
+    }
+    return peak
+  }
+
+  // How many of a provider's limits are currently pinned to the dock.
+  function trackedCountForProvider(providerId) {
+    var tracked = root.toList(root.trackedSettings, [])
+    var count = 0
+    for (var i = 0; i < tracked.length; i++) {
+      var tid = String(tracked[i] || "")
+      if (tid.indexOf(providerId + ":") === 0) count++
+    }
+    return count
+  }
 
   function makeAsciiBar(percent, length, style) {
     var clamped = Math.max(0.0, Math.min(1.0, Number(percent || 0.0)))
@@ -198,6 +384,7 @@ BarWidget {
         root.limitsData = parsed
         root.nowMs = Date.now()
         root.updateTrackedItems()
+        root.detectLimitEvents(parsed.allLimits)
       }
     } catch (e) {
       console.warn("gladimdim.ai-limits: parse error", e)
@@ -257,7 +444,9 @@ BarWidget {
   function tooltipContent() {
     var items = trackedItems
     if (!items || items.length === 0) return "AI Limits Tracker\n(Click to configure)"
-    var lines = ["AI Limits Tracker (Click for details)"]
+    var lines = root.activeEvent !== null
+      ? [root.activeEvent.text, ""]
+      : ["AI Limits Tracker (Click for details)"]
     for (var i = 0; i < items.length; i++) {
       var item = items[i]
       var rText = item.resetsFormatted ? " (" + item.resetsFormatted + ")" : ""
@@ -337,10 +526,41 @@ BarWidget {
       onClicked: function(mouse) { root.triggerPress(mouse.button) }
     }
 
+    // Pulsing halo while an announcement is waiting to be read in the popup.
+    Rectangle {
+      id: eventGlow
+      anchors.centerIn: dockContent
+      width: dockContent.width + Style.space(12)
+      height: Math.min(dockItem.height - 2, dockContent.height + Style.space(6))
+      radius: root.radiusVal
+      visible: root.activeEvent !== null && !root.popupOpen
+
+      property real rainbow: 0
+      NumberAnimation on rainbow {
+        running: eventGlow.visible && root.activeEvent !== null && root.activeEvent.kind === "reset"
+        loops: Animation.Infinite
+        from: 0
+        to: 1
+        duration: 2400
+      }
+
+      color: root.activeEvent && root.activeEvent.kind === "reset"
+        ? Qt.hsla(eventGlow.rainbow, 0.8, 0.55, 0.35)
+        : Qt.rgba(root.urgent.r, root.urgent.g, root.urgent.b, 0.35)
+
+      SequentialAnimation on opacity {
+        running: eventGlow.visible
+        loops: Animation.Infinite
+        NumberAnimation { from: 0.1; to: 0.55; duration: 750; easing.type: Easing.InOutQuad }
+        NumberAnimation { from: 0.55; to: 0.1; duration: 750; easing.type: Easing.InOutQuad }
+      }
+    }
+
     // Centered Dock Content
     Item {
       id: dockContent
       anchors.centerIn: parent
+      anchors.horizontalCenterOffset: root.dockShake
       implicitWidth: root.trackedItems.length === 1 ? singleRow.implicitWidth : multiColumn.implicitWidth
       implicitHeight: root.trackedItems.length === 1 ? singleRow.implicitHeight : multiColumn.implicitHeight
 
@@ -367,7 +587,7 @@ BarWidget {
         Text {
           visible: root.showLabel && singleRow.item !== null
           text: singleRow.item ? singleRow.item.shortLabel : ""
-          color: root.coloredBars && singleRow.item ? singleRow.item.color : root.foreground
+          color: root.dockLabelColor(singleRow.item)
           font.family: root.fontFamily
           font.pixelSize: 10
           font.bold: true
@@ -377,10 +597,8 @@ BarWidget {
 
         Text {
           visible: singleRow.item !== null
-          text: singleRow.item ? root.makeAsciiBar(singleRow.item.percent, root.barLength, root.barStyle) : ""
-          color: singleRow.item && singleRow.item.percent >= 0.95
-            ? root.urgent
-            : (root.coloredBars && singleRow.item ? singleRow.item.color : root.foreground)
+          text: root.dockBarText(singleRow.item)
+          color: root.dockBarColor(singleRow.item)
           font.family: root.fontFamily
           font.pixelSize: 10
           renderType: Text.NativeRendering
@@ -390,10 +608,10 @@ BarWidget {
         Text {
           visible: root.showPercent && singleRow.item !== null
           text: singleRow.item ? singleRow.item.percentInt + "%" : ""
-          color: singleRow.item && singleRow.item.percent >= 0.95 ? root.urgent : root.foreground
+          color: root.dockPercentColor(singleRow.item)
           font.family: root.fontFamily
           font.pixelSize: 10
-          font.bold: singleRow.item && singleRow.item.percent >= 0.95
+          font.bold: (singleRow.item && singleRow.item.percent >= 0.95) || root.isEventRow(singleRow.item)
           renderType: Text.NativeRendering
           anchors.verticalCenter: parent.verticalCenter
         }
@@ -440,7 +658,7 @@ BarWidget {
                   anchors.left: parent.left
                   anchors.verticalCenter: parent.verticalCenter
                   text: modelData.shortLabel
-                  color: root.coloredBars ? modelData.color : root.foreground
+                  color: root.dockLabelColor(modelData)
                   font.family: root.fontFamily
                   font.pixelSize: 9
                   font.bold: true
@@ -452,10 +670,8 @@ BarWidget {
 
               // ASCII progress bar
               Text {
-                text: root.makeAsciiBar(modelData.percent, root.barLength, root.barStyle)
-                color: modelData.percent >= 0.95
-                  ? root.urgent
-                  : (root.coloredBars ? modelData.color : root.foreground)
+                text: root.dockBarText(modelData)
+                color: root.dockBarColor(modelData)
                 font.family: root.fontFamily
                 font.pixelSize: 9
                 renderType: Text.NativeRendering
@@ -472,10 +688,10 @@ BarWidget {
                   anchors.right: parent.right
                   anchors.verticalCenter: parent.verticalCenter
                   text: modelData.percentInt + "%"
-                  color: modelData.percent >= 0.95 ? root.urgent : root.foreground
+                  color: root.dockPercentColor(modelData)
                   font.family: root.fontFamily
                   font.pixelSize: 9
-                  font.bold: modelData.percent >= 0.95
+                  font.bold: modelData.percent >= 0.95 || root.isEventRow(modelData)
                   renderType: Text.NativeRendering
                 }
               }
@@ -500,6 +716,273 @@ BarWidget {
           }
         }
       }
+    }
+  }
+
+  // ------------------------------------------------- Limit lifecycle events
+  // A limit hitting 100% or rolling over into a fresh window raises an event
+  // that the popup announces with a scrolling marquee.
+  property var lastPercents: ({})
+  property bool percentsSeeded: false
+  property var eventQueue: []
+  property var activeEvent: null
+
+  readonly property int eventStaleMs: 30 * 60 * 1000
+
+  readonly property var depletedQuips: [
+    "Ooops, tokens for %1 depleted!",
+    "%1 just ran dry — time to go touch some grass 🌱",
+    "That's all folks: %1 is fresh out of tokens 🍿",
+    "RIP %1 tokens. Gone, but not forgotten 🪦",
+    "%1 hit 100%. Even robots need a nap 😴",
+    "Congrats, you maxed out %1. Impressive. Concerning. 🏆"
+  ]
+
+  readonly property var resetQuips: [
+    "%1 refilled — go wild! 🌈",
+    "Fresh tokens for %1, the quota gods have smiled ✨",
+    "%1 is back from the dead! 🧟",
+    "Ka-ching! %1 just reset 🎰",
+    "New window, new you: %1 is topped up 🚀"
+  ]
+
+  function limitLabel(lim) {
+    if (!lim) return "that limit"
+    var name = lim.providerName ? String(lim.providerName) : ""
+    var title = lim.title ? String(lim.title) : ""
+    if (name !== "" && title !== "") return name + " " + title
+    return name !== "" ? name : (title !== "" ? title : "that limit")
+  }
+
+  function pushLimitEvent(kind, lim) {
+    var quips = kind === "depleted" ? root.depletedQuips : root.resetQuips
+    var quip = quips[Math.floor(Math.random() * quips.length)]
+
+    var queued = root.eventQueue.slice()
+    queued.push({
+      "kind": kind,
+      "id": lim && lim.id ? lim.id : "",
+      "text": String(quip).arg(root.limitLabel(lim)),
+      "at": Date.now()
+    })
+    // Never let a long unattended session pile up a backlog.
+    if (queued.length > 6) queued = queued.slice(queued.length - 6)
+    root.eventQueue = queued
+
+    if (root.activeEvent === null) root.advanceEvent()
+  }
+
+  function advanceEvent() {
+    var queued = root.eventQueue.slice()
+    var now = Date.now()
+
+    while (queued.length > 0) {
+      var ev = queued.shift()
+      if (now - ev.at <= root.eventStaleMs) {
+        root.eventQueue = queued
+        root.activeEvent = ev
+        return
+      }
+    }
+
+    root.eventQueue = queued
+    root.activeEvent = null
+  }
+
+  function dismissEvent() {
+    root.advanceEvent()
+  }
+
+  // Compares each refresh against the previous one to spot depletions/resets.
+  function detectLimitEvents(limits) {
+    var list = root.toList(limits, [])
+    var next = ({})
+    var seeded = root.percentsSeeded
+
+    for (var i = 0; i < list.length; i++) {
+      var lim = list[i]
+      if (!lim || !lim.id) continue
+
+      var current = Number(lim.percent || 0)
+      next[lim.id] = current
+      if (!seeded) continue
+
+      var before = root.lastPercents[lim.id]
+      if (before === undefined) continue
+
+      if (current >= 0.999 && before < 0.999) root.pushLimitEvent("depleted", lim)
+      else if (before - current >= 0.2) root.pushLimitEvent("reset", lim)
+    }
+
+    root.lastPercents = next
+    root.percentsSeeded = true
+  }
+
+  // Banner lives for 15s of popup time, or until the user clicks it away.
+  Timer {
+    id: eventTimer
+    interval: 15000
+    repeat: false
+    running: root.activeEvent !== null && root.popupOpen
+    onTriggered: root.advanceEvent()
+  }
+
+  // Nobody opened the popup — retire the announcement once it goes stale.
+  Timer {
+    interval: 60000
+    repeat: true
+    running: root.activeEvent !== null && !root.popupOpen
+    onTriggered: {
+      if (root.activeEvent && Date.now() - root.activeEvent.at > root.eventStaleMs) root.advanceEvent()
+    }
+  }
+
+  // ------------------------------------------- Dock animation during an event
+  // While an announcement is pending and the popup is closed, the tracked rows
+  // in the bar animate: a scanner sweeps the bar of a depleted limit, a refill
+  // wave runs across a limit that just reset.
+  readonly property bool dockEventActive: root.activeEvent !== null && !root.popupOpen
+  readonly property bool dockEventReset: root.dockEventActive && root.activeEvent.kind === "reset"
+
+  // True when the limit the event is about is actually pinned to the dock.
+  readonly property bool dockEventTargeted: {
+    if (root.activeEvent === null) return false
+    var items = root.trackedItems
+    for (var i = 0; i < items.length; i++) {
+      if (items[i] && items[i].id === root.activeEvent.id) return true
+    }
+    return false
+  }
+
+  property int dockTick: 0
+  property real dockPulse: 0
+  property real dockRainbow: 0
+  property real dockShake: 0
+
+  Timer {
+    interval: 90
+    repeat: true
+    running: root.dockEventActive
+    onTriggered: root.dockTick++
+    onRunningChanged: if (!running) root.dockTick = 0
+  }
+
+  SequentialAnimation on dockPulse {
+    running: root.dockEventActive && !root.dockEventReset
+    loops: Animation.Infinite
+    NumberAnimation { from: 0.0; to: 1.0; duration: 520; easing.type: Easing.InOutQuad }
+    NumberAnimation { from: 1.0; to: 0.0; duration: 520; easing.type: Easing.InOutQuad }
+  }
+
+  NumberAnimation on dockRainbow {
+    running: root.dockEventReset
+    loops: Animation.Infinite
+    from: 0.0
+    to: 1.0
+    duration: 1800
+  }
+
+  // An occasional nudge, not a permanent jitter.
+  SequentialAnimation on dockShake {
+    running: root.dockEventActive && !root.dockEventReset
+    loops: Animation.Infinite
+    NumberAnimation { from: 0; to: 2; duration: 70 }
+    NumberAnimation { from: 2; to: -2; duration: 130 }
+    NumberAnimation { from: -2; to: 0; duration: 70 }
+    PauseAnimation { duration: 1100 }
+  }
+
+  // Does this dock row take part in the current announcement? If the limit in
+  // question is not pinned to the dock at all, every row joins in instead.
+  function isEventRow(item) {
+    if (!root.dockEventActive || !item) return false
+    return root.dockEventTargeted ? item.id === root.activeEvent.id : true
+  }
+
+  function barGlyphs(style) {
+    if (style === "ascii") return ["=", " "]
+    if (style === "retro") return ["#", "-"]
+    if (style === "squares") return ["■", "□"]
+    if (style === "shaded") return ["▓", "░"]
+    if (style === "braille") return ["⣿", "⣀"]
+    return ["█", "░"]
+  }
+
+  function makeEventBar(length, style) {
+    var len = Math.max(6, Math.min(40, length || 16))
+    var glyphs = root.barGlyphs(style)
+    var out = ""
+    var i
+
+    if (root.dockEventReset) {
+      // Refill wave running left to right, with a short beat before it repeats.
+      var head = root.dockTick % (len + 5)
+      for (i = 0; i < len; i++) out += (i < head ? glyphs[0] : glyphs[1])
+    } else {
+      // Larson scanner: a gap sweeping back and forth across a full bar.
+      var span = Math.max(1, (len - 1) * 2)
+      var pos = root.dockTick % span
+      if (pos >= len) pos = span - pos
+      for (i = 0; i < len; i++) out += (Math.abs(i - pos) <= 1 ? glyphs[1] : glyphs[0])
+    }
+
+    return "[" + out + "]"
+  }
+
+  function dockBarText(item) {
+    if (!item) return ""
+    if (root.isEventRow(item)) return root.makeEventBar(root.barLength, root.barStyle)
+    return root.makeAsciiBar(item.percent, root.barLength, root.barStyle)
+  }
+
+  function dockEventColor() {
+    if (root.dockEventReset) return Qt.hsla(root.dockRainbow, 0.85, 0.62, 1.0)
+    return Qt.rgba(root.urgent.r, root.urgent.g, root.urgent.b, 0.45 + 0.55 * root.dockPulse)
+  }
+
+  function dockBarColor(item) {
+    if (!item) return root.foreground
+    if (root.isEventRow(item)) return root.dockEventColor()
+    return item.percent >= 0.95
+      ? root.urgent
+      : (root.coloredBars ? item.color : root.foreground)
+  }
+
+  function dockLabelColor(item) {
+    if (!item) return root.foreground
+    if (root.isEventRow(item)) return root.dockEventColor()
+    return root.coloredBars ? item.color : root.foreground
+  }
+
+  function dockPercentColor(item) {
+    if (!item) return root.foreground
+    if (root.isEventRow(item)) return root.dockEventColor()
+    return item.percent >= 0.95 ? root.urgent : root.foreground
+  }
+
+  // Expand / collapse every provider panel at once.
+  component FoldAllButton: Rectangle {
+    implicitWidth: foldAllLabel.implicitWidth + Style.space(16)
+    implicitHeight: Style.space(22)
+    radius: root.radiusVal
+    color: foldAllArea.containsMouse ? root.cardHover : root.cardBg
+    border.color: root.cardBorder
+
+    Text {
+      id: foldAllLabel
+      anchors.centerIn: parent
+      text: root.anyProviderCollapsed() ? "⊞ Expand all" : "⊟ Collapse all"
+      color: root.foreground
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.caption
+    }
+
+    MouseArea {
+      id: foldAllArea
+      anchors.fill: parent
+      hoverEnabled: true
+      cursorShape: Qt.PointingHandCursor
+      onClicked: root.toggleAllProviders()
     }
   }
 
@@ -530,6 +1013,7 @@ BarWidget {
         if (t === "2") root.activeTab = 1
         if (t === "3") root.activeTab = 2
         if (t === "c" || t === "C") root.cycleStyle()
+        if (t === "e" || t === "E") root.toggleAllProviders()
       }
 
       ColumnLayout {
@@ -753,6 +1237,137 @@ BarWidget {
           }
         }
 
+        // Limit lifecycle announcement — scrolls past like an old <marquee>,
+        // for 15 seconds or until it is clicked away.
+        Rectangle {
+          id: eventBanner
+          visible: root.activeEvent !== null
+          Layout.fillWidth: true
+          implicitHeight: Style.space(34)
+          radius: root.radiusVal
+          clip: true
+          border.width: 1
+
+          readonly property bool isReset: root.activeEvent !== null && root.activeEvent.kind === "reset"
+
+          // Drives the rainbow band and the hue of a reset announcement.
+          property real rainbow: 0
+          NumberAnimation on rainbow {
+            running: eventBanner.visible && eventBanner.isReset
+            loops: Animation.Infinite
+            from: 0
+            to: 1
+            duration: 2400
+          }
+
+          // Marquee travel: 0 = just off the right edge, 1 = just off the left.
+          property real marquee: 0
+          NumberAnimation on marquee {
+            running: eventBanner.visible
+            loops: Animation.Infinite
+            from: 0
+            to: 1
+            duration: Math.max(4500, (eventBanner.width + marqueeText.implicitWidth) * 7)
+          }
+
+          color: eventBanner.isReset
+            ? Qt.rgba(0, 0, 0, 0.35)
+            : Qt.rgba(root.urgent.r, root.urgent.g, root.urgent.b, 0.15)
+          border.color: eventBanner.isReset
+            ? Qt.hsla(eventBanner.rainbow, 0.85, 0.6, 1.0)
+            : root.urgent
+
+          // Rainbow band sliding under a reset announcement. Two identical
+          // colour cycles across double width, so the loop is seamless.
+          Rectangle {
+            visible: eventBanner.isReset
+            height: parent.height
+            width: parent.width * 2
+            x: -parent.width * (1.0 - eventBanner.rainbow)
+            opacity: 0.35
+
+            gradient: Gradient {
+              orientation: Gradient.Horizontal
+              GradientStop { position: 0.000; color: "#ff3b30" }
+              GradientStop { position: 0.083; color: "#ff9500" }
+              GradientStop { position: 0.167; color: "#ffcc00" }
+              GradientStop { position: 0.250; color: "#34c759" }
+              GradientStop { position: 0.333; color: "#32ade6" }
+              GradientStop { position: 0.417; color: "#af52de" }
+              GradientStop { position: 0.500; color: "#ff3b30" }
+              GradientStop { position: 0.583; color: "#ff9500" }
+              GradientStop { position: 0.667; color: "#ffcc00" }
+              GradientStop { position: 0.750; color: "#34c759" }
+              GradientStop { position: 0.833; color: "#32ade6" }
+              GradientStop { position: 0.917; color: "#af52de" }
+              GradientStop { position: 1.000; color: "#ff3b30" }
+            }
+          }
+
+          // Depleted announcements pulse instead.
+          Rectangle {
+            anchors.fill: parent
+            visible: !eventBanner.isReset && eventBanner.visible
+            color: Qt.rgba(root.urgent.r, root.urgent.g, root.urgent.b, 0.25)
+
+            SequentialAnimation on opacity {
+              running: !eventBanner.isReset && eventBanner.visible
+              loops: Animation.Infinite
+              NumberAnimation { from: 0.0; to: 1.0; duration: 750; easing.type: Easing.InOutQuad }
+              NumberAnimation { from: 1.0; to: 0.0; duration: 750; easing.type: Easing.InOutQuad }
+            }
+          }
+
+          Item {
+            id: marqueeClip
+            anchors.fill: parent
+            anchors.leftMargin: Style.space(8)
+            anchors.rightMargin: dismissButton.width + Style.space(14)
+            clip: true
+
+            Text {
+              id: marqueeText
+              anchors.verticalCenter: parent.verticalCenter
+              x: marqueeClip.width - eventBanner.marquee * (marqueeClip.width + implicitWidth)
+              text: root.activeEvent ? root.activeEvent.text : ""
+              color: eventBanner.isReset
+                ? Qt.hsla(1.0 - eventBanner.rainbow, 0.95, 0.75, 1.0)
+                : root.urgent
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.bodySmall
+              font.bold: true
+            }
+          }
+
+          Rectangle {
+            id: dismissButton
+            anchors.right: parent.right
+            anchors.rightMargin: Style.space(6)
+            anchors.verticalCenter: parent.verticalCenter
+            implicitWidth: dismissLabel.implicitWidth + Style.space(12)
+            implicitHeight: Style.space(20)
+            radius: root.radiusVal
+            color: root.background
+            border.color: eventBanner.border.color
+
+            Text {
+              id: dismissLabel
+              anchors.centerIn: parent
+              text: root.eventQueue.length > 0 ? "✕ +" + root.eventQueue.length : "✕"
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              font.bold: true
+            }
+          }
+
+          MouseArea {
+            anchors.fill: parent
+            cursorShape: Qt.PointingHandCursor
+            onClicked: root.dismissEvent()
+          }
+        }
+
         // Scrollable Tab Contents
         Flickable {
           id: flick
@@ -880,6 +1495,8 @@ BarWidget {
 
                 Item { Layout.fillWidth: true }
 
+                FoldAllButton {}
+
                 Rectangle {
                   implicitWidth: countBadgeText.implicitWidth + Style.space(14)
                   implicitHeight: Style.space(20)
@@ -899,106 +1516,344 @@ BarWidget {
                 }
               }
 
-              // List of all limits for user to toggle
+              // Limits grouped by provider, each provider in a collapsible panel
               Repeater {
-                model: root.allLimits
+                model: root.groupedLimits
 
                 Rectangle {
-                  id: limitRow
+                  id: groupCard
                   required property var modelData
+                  readonly property bool expanded: !root.isProviderCollapsed(modelData.providerId)
+                  readonly property int pinnedCount: root.trackedCountForProvider(modelData.providerId)
+                  // The panel's first row, which is what the header reports for
+                  // the provider — arrange the rows and you choose it.
+                  readonly property var headLimit: modelData.topLimit || null
+
                   Layout.fillWidth: true
-                  implicitHeight: rowLayout.implicitHeight + Style.space(16)
+                  implicitHeight: groupCol.implicitHeight + Style.space(16)
                   radius: root.radiusVal
-                  color: root.isLimitTracked(modelData.id)
-                    ? Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.12)
-                    : (rowHover.containsMouse ? root.cardHover : root.cardBg)
-                  border.color: root.isLimitTracked(modelData.id)
-                    ? root.accent
+                  clip: true
+                  color: root.cardBg
+                  border.color: pinnedCount > 0
+                    ? Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.55)
                     : root.cardBorder
-                  border.width: root.isLimitTracked(modelData.id) ? 1.5 : 1
 
-                  RowLayout {
-                    id: rowLayout
+                  ColumnLayout {
+                    id: groupCol
                     anchors.fill: parent
-                    anchors.margins: Style.space(10)
-                    spacing: Style.space(10)
+                    anchors.margins: Style.space(8)
+                    spacing: Style.space(6)
 
-                    // Track Checkbox
-                    Rectangle {
-                      width: Style.space(20)
-                      height: Style.space(20)
-                      radius: root.radiusVal
-                      color: root.isLimitTracked(modelData.id) ? root.accent : "transparent"
-                      border.color: root.isLimitTracked(modelData.id) ? root.accent : root.muted
-                      border.width: 1.5
-
-                      Text {
-                        anchors.centerIn: parent
-                        text: "✓"
-                        color: "#000000"
-                        font.bold: true
-                        font.pixelSize: 12
-                        visible: root.isLimitTracked(modelData.id)
-                      }
-                    }
-
-                    ColumnLayout {
+                    // Panel header — click anywhere to fold / unfold
+                    Item {
                       Layout.fillWidth: true
-                      spacing: 3
+                      implicitHeight: groupHeader.implicitHeight + Style.space(4)
 
                       RowLayout {
-                        spacing: 6
+                        id: groupHeader
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: Style.space(8)
+
                         Text {
-                          text: modelData.providerName + " — " + modelData.title
+                          text: "▸"
+                          color: root.muted
+                          font.family: root.fontFamily
+                          font.pixelSize: Style.font.body
+                          rotation: groupCard.expanded ? 90 : 0
+                          Behavior on rotation {
+                            NumberAnimation { duration: 130; easing.type: Easing.OutCubic }
+                          }
+                        }
+
+                        Rectangle {
+                          width: 10
+                          height: 10
+                          radius: 5
+                          color: groupCard.modelData.color
+                        }
+
+                        Text {
+                          text: groupCard.modelData.providerName
                           color: root.foreground
                           font.family: root.fontFamily
                           font.pixelSize: Style.font.bodySmall
                           font.bold: true
                         }
+
+                        Text {
+                          text: groupCard.modelData.limits.length === 1
+                            ? "1 limit"
+                            : groupCard.modelData.limits.length + " limits"
+                          color: root.muted
+                          font.family: root.fontFamily
+                          font.pixelSize: Style.font.caption
+                        }
+
                         Item { Layout.fillWidth: true }
+
+                        // Header summary: the panel's TOP row. The limit the user
+                        // put first is the one the provider is judged by, so the
+                        // short label rides along — a bare bar would not say
+                        // which of three limits is being reported.
                         Text {
-                          text: modelData.percentInt + "%"
-                          color: modelData.percent >= 0.95 ? root.urgent : (root.coloredBars ? modelData.color : root.foreground)
+                          visible: !groupCard.expanded && groupCard.headLimit !== null
+                          text: groupCard.headLimit
+                            ? groupCard.headLimit.shortLabel + "  "
+                              + root.makeAsciiBar(groupCard.headLimit.percent, 10, root.barStyle)
+                              + " " + groupCard.headLimit.percentInt + "%"
+                            : ""
+                          color: groupCard.headLimit && groupCard.headLimit.percent >= 0.95
+                            ? root.urgent
+                            : (root.coloredBars ? groupCard.modelData.color : root.foreground)
                           font.family: root.fontFamily
-                          font.pixelSize: Style.font.bodySmall
-                          font.bold: true
+                          font.pixelSize: 10
+                        }
+
+                        Rectangle {
+                          visible: groupCard.pinnedCount > 0
+                          implicitWidth: pinnedBadge.implicitWidth + Style.space(10)
+                          implicitHeight: Style.space(18)
+                          radius: root.radiusVal
+                          color: Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.18)
+                          border.color: root.accent
+
+                          Text {
+                            id: pinnedBadge
+                            anchors.centerIn: parent
+                            text: "★ " + groupCard.pinnedCount + " in dock"
+                            color: root.accent
+                            font.family: root.fontFamily
+                            font.pixelSize: Style.font.caption
+                            font.bold: true
+                          }
                         }
                       }
 
-                      // Progress bar preview
-                      Text {
-                        text: root.makeAsciiBar(modelData.percent, 18, root.barStyle)
-                        color: modelData.percent >= 0.95 ? root.urgent : (root.coloredBars ? modelData.color : root.foreground)
-                        font.family: root.fontFamily
-                        font.pixelSize: 10
+                      MouseArea {
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: root.toggleProviderCollapsed(groupCard.modelData.providerId)
+                      }
+                    }
+
+                    // Panel body — animates open / shut
+                    Item {
+                      id: groupBody
+                      Layout.fillWidth: true
+                      clip: true
+                      implicitHeight: groupCard.expanded ? groupBodyCol.implicitHeight : 0
+                      visible: implicitHeight > 0.5
+
+                      Behavior on implicitHeight {
+                        NumberAnimation { duration: 140; easing.type: Easing.OutCubic }
                       }
 
-                      RowLayout {
-                        spacing: 8
-                        Text {
-                          visible: modelData.resetsFormatted !== ""
-                          text: "⏳ " + modelData.resetsFormatted
-                          color: root.muted
-                          font.family: root.fontFamily
-                          font.pixelSize: Style.font.caption
-                        }
-                        Text {
-                          visible: modelData.used !== null && modelData.allowance !== null
-                          text: "• " + modelData.used + " / " + modelData.allowance + " used"
-                          color: root.muted
-                          font.family: root.fontFamily
-                          font.pixelSize: Style.font.caption
+                      ColumnLayout {
+                        id: groupBodyCol
+                        width: groupBody.width
+                        spacing: Style.space(6)
+
+                        Repeater {
+                          model: groupCard.modelData.limits
+
+                          Rectangle {
+                            id: limitRow
+                            required property var modelData
+                            required property int index
+                            readonly property bool canMoveUp: index > 0
+                            readonly property bool canMoveDown: index < groupCard.modelData.limits.length - 1
+                            Layout.fillWidth: true
+                            implicitHeight: rowLayout.implicitHeight + Style.space(16)
+                            radius: root.radiusVal
+                            color: root.isLimitTracked(modelData.id)
+                              ? Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.12)
+                              : (rowHover.containsMouse ? root.cardHover : root.cardBg)
+                            border.color: root.isLimitTracked(modelData.id)
+                              ? root.accent
+                              : root.cardBorder
+                            border.width: root.isLimitTracked(modelData.id) ? 1.5 : 1
+
+                            RowLayout {
+                              id: rowLayout
+                              anchors.fill: parent
+                              anchors.margins: Style.space(10)
+                              spacing: Style.space(10)
+                              // Above `rowHover`, which fills the row and is
+                              // declared after this. `z` only orders siblings, so
+                              // raising it on the arrows themselves would not lift
+                              // them out from under that click area — it has to be
+                              // set here, on their ancestor. Nothing else in this
+                              // layout handles the mouse, so a click on the label
+                              // or the bar still falls through and pins the limit.
+                              z: 1
+
+                              // Track Checkbox
+                              Rectangle {
+                                width: Style.space(20)
+                                height: Style.space(20)
+                                radius: root.radiusVal
+                                color: root.isLimitTracked(modelData.id) ? root.accent : "transparent"
+                                border.color: root.isLimitTracked(modelData.id) ? root.accent : root.muted
+                                border.width: 1.5
+
+                                Text {
+                                  anchors.centerIn: parent
+                                  text: "✓"
+                                  color: "#000000"
+                                  font.bold: true
+                                  font.pixelSize: 12
+                                  visible: root.isLimitTracked(modelData.id)
+                                }
+                              }
+
+                              ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 3
+
+                                RowLayout {
+                                  spacing: 6
+                                  Text {
+                                    text: modelData.providerName + " — " + modelData.title
+                                    color: root.foreground
+                                    font.family: root.fontFamily
+                                    font.pixelSize: Style.font.bodySmall
+                                    font.bold: true
+                                  }
+                                  Item { Layout.fillWidth: true }
+                                  Text {
+                                    text: modelData.percentInt + "%"
+                                    color: modelData.percent >= 0.95 ? root.urgent : (root.coloredBars ? modelData.color : root.foreground)
+                                    font.family: root.fontFamily
+                                    font.pixelSize: Style.font.bodySmall
+                                    font.bold: true
+                                  }
+                                }
+
+                                // Progress bar preview
+                                Text {
+                                  text: root.makeAsciiBar(modelData.percent, 18, root.barStyle)
+                                  color: modelData.percent >= 0.95 ? root.urgent : (root.coloredBars ? modelData.color : root.foreground)
+                                  font.family: root.fontFamily
+                                  font.pixelSize: 10
+                                }
+
+                                RowLayout {
+                                  spacing: 8
+                                  Text {
+                                    visible: modelData.resetsFormatted !== ""
+                                    text: "⏳ " + modelData.resetsFormatted
+                                    color: root.muted
+                                    font.family: root.fontFamily
+                                    font.pixelSize: Style.font.caption
+                                  }
+                                  Text {
+                                    visible: modelData.used !== null && modelData.allowance !== null
+                                    text: "• " + modelData.used + " / " + modelData.allowance + " used"
+                                    color: root.muted
+                                    font.family: root.fontFamily
+                                    font.pixelSize: Style.font.caption
+                                  }
+                                }
+                              }
+
+                              // Arrange the panel. A blocked direction dims but
+                              // stays put — both arrows keep their place so they
+                              // do not jump about as a row travels — and keeps a
+                              // live MouseArea, so the dead click is swallowed
+                              // here rather than falling through and pinning the
+                              // limit the user was only trying to move.
+                              // `moveLimit` is what refuses the move itself.
+                              ColumnLayout {
+                                spacing: 2
+
+                                Rectangle {
+                                  readonly property bool armed: limitRow.canMoveUp
+                                  readonly property bool lit: armed && moveUpArea.containsMouse
+                                  implicitWidth: Style.space(18)
+                                  implicitHeight: Style.space(15)
+                                  radius: root.radiusVal
+                                  opacity: armed ? 1.0 : 0.25
+                                  color: lit ? root.cardHover : "transparent"
+                                  border.color: lit ? root.accent : root.cardBorder
+
+                                  Text {
+                                    anchors.centerIn: parent
+                                    text: "▲"
+                                    color: parent.lit ? root.accent : root.muted
+                                    font.family: root.fontFamily
+                                    font.pixelSize: 8
+                                  }
+
+                                  MouseArea {
+                                    id: moveUpArea
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: parent.armed ? Qt.PointingHandCursor : Qt.ArrowCursor
+                                    onClicked: root.moveLimit(limitRow.modelData.providerId,
+                                                              limitRow.modelData.id, -1)
+                                  }
+                                }
+
+                                Rectangle {
+                                  readonly property bool armed: limitRow.canMoveDown
+                                  readonly property bool lit: armed && moveDownArea.containsMouse
+                                  implicitWidth: Style.space(18)
+                                  implicitHeight: Style.space(15)
+                                  radius: root.radiusVal
+                                  opacity: armed ? 1.0 : 0.25
+                                  color: lit ? root.cardHover : "transparent"
+                                  border.color: lit ? root.accent : root.cardBorder
+
+                                  Text {
+                                    anchors.centerIn: parent
+                                    text: "▼"
+                                    color: parent.lit ? root.accent : root.muted
+                                    font.family: root.fontFamily
+                                    font.pixelSize: 8
+                                  }
+
+                                  MouseArea {
+                                    id: moveDownArea
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: parent.armed ? Qt.PointingHandCursor : Qt.ArrowCursor
+                                    onClicked: root.moveLimit(limitRow.modelData.providerId,
+                                                              limitRow.modelData.id, 1)
+                                  }
+                                }
+                              }
+                            }
+
+                            // Marks the row that speaks for the provider when the
+                            // panel is folded — the arrows are only meaningful if
+                            // you can see what reaching the top buys you. Inset
+                            // from the corners so it reads as a marker rather than
+                            // a broken border on the row's rounded edge.
+                            Rectangle {
+                              visible: limitRow.index === 0 && groupCard.modelData.limits.length > 1
+                              anchors.left: parent.left
+                              anchors.leftMargin: 1
+                              anchors.verticalCenter: parent.verticalCenter
+                              width: 2
+                              height: Math.max(0, parent.height - Style.space(14))
+                              radius: 1
+                              color: root.coloredBars ? groupCard.modelData.color : root.accent
+                            }
+
+                            MouseArea {
+                              id: rowHover
+                              anchors.fill: parent
+                              hoverEnabled: true
+                              cursorShape: Qt.PointingHandCursor
+                              onClicked: root.toggleTrackLimit(modelData.id)
+                            }
+                          }
                         }
                       }
                     }
-                  }
-
-                  MouseArea {
-                    id: rowHover
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: root.toggleTrackLimit(modelData.id)
                   }
                 }
               }
@@ -1010,15 +1865,37 @@ BarWidget {
               Layout.fillWidth: true
               spacing: Style.space(12)
 
+              RowLayout {
+                Layout.fillWidth: true
+                spacing: Style.space(8)
+
+                Text {
+                  text: "PROVIDERS DETECTED:"
+                  color: root.muted
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  font.bold: true
+                }
+
+                Item { Layout.fillWidth: true }
+
+                FoldAllButton {}
+              }
+
               Repeater {
                 model: root.providers
 
                 Rectangle {
                   id: provCard
                   required property var modelData
+                  readonly property bool expanded: !root.isProviderCollapsed(modelData.id)
+                  readonly property int pinnedCount: root.trackedCountForProvider(modelData.id)
+                  readonly property real peakPercent: root.peakPercentOf(modelData.limits)
+
                   Layout.fillWidth: true
                   implicitHeight: provCardCol.implicitHeight + Style.space(20)
                   radius: root.radiusVal
+                  clip: true
                   color: root.cardBg
                   border.color: root.cardBorder
 
@@ -1028,129 +1905,217 @@ BarWidget {
                     anchors.margins: Style.space(12)
                     spacing: Style.space(8)
 
-                    // Provider Header
-                    RowLayout {
+                    // Provider Header — click anywhere to fold / unfold
+                    Item {
                       Layout.fillWidth: true
-                      spacing: 8
+                      implicitHeight: provHeader.implicitHeight + Style.space(4)
 
-                      Rectangle {
-                        width: 10
-                        height: 10
-                        radius: 5
-                        color: modelData.color
-                      }
+                      RowLayout {
+                        id: provHeader
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: 8
 
-                      Text {
-                        text: modelData.name
-                        color: root.foreground
-                        font.family: root.fontFamily
-                        font.pixelSize: Style.font.subtitle
-                        font.bold: true
-                      }
-
-                      Text {
-                        visible: modelData.tierLabel !== ""
-                        text: "(" + modelData.tierLabel + ")"
-                        color: root.muted
-                        font.family: root.fontFamily
-                        font.pixelSize: Style.font.caption
-                      }
-
-                      Item { Layout.fillWidth: true }
-
-                      Text {
-                        text: modelData.limitsCount > 0 ? modelData.limitsCount + " limits active" : "No limits configured"
-                        color: modelData.limitsCount > 0 ? root.accent : root.muted
-                        font.family: root.fontFamily
-                        font.pixelSize: Style.font.caption
-                      }
-                    }
-
-                    // Auth text if unavailable
-                    Text {
-                      visible: modelData.authHelpText !== "" && modelData.limitsCount === 0
-                      text: modelData.authHelpText
-                      color: root.muted
-                      font.family: root.fontFamily
-                      font.pixelSize: Style.font.caption
-                      wrapMode: Text.WordWrap
-                      Layout.fillWidth: true
-                    }
-
-                    // Provider Limits List
-                    Repeater {
-                      model: modelData.limits
-
-                      Rectangle {
-                        required property var modelData
-                        Layout.fillWidth: true
-                        implicitHeight: pLimCol.implicitHeight + Style.space(12)
-                        radius: root.radiusVal
-                        color: root.cardHover
-
-                        ColumnLayout {
-                          id: pLimCol
-                          anchors.fill: parent
-                          anchors.margins: Style.space(8)
-                          spacing: 4
-
-                          RowLayout {
-                            Layout.fillWidth: true
-                            Text {
-                              text: modelData.title
-                              color: root.foreground
-                              font.family: root.fontFamily
-                              font.pixelSize: Style.font.bodySmall
-                              font.bold: true
-                            }
-                            Item { Layout.fillWidth: true }
-                            Text {
-                              text: modelData.percentInt + "%"
-                              color: modelData.percent >= 0.95 ? root.urgent : (root.coloredBars ? modelData.color : root.foreground)
-                              font.family: root.fontFamily
-                              font.pixelSize: Style.font.bodySmall
-                              font.bold: true
-                            }
+                        Text {
+                          text: "▸"
+                          color: root.muted
+                          font.family: root.fontFamily
+                          font.pixelSize: Style.font.body
+                          rotation: provCard.expanded ? 90 : 0
+                          Behavior on rotation {
+                            NumberAnimation { duration: 130; easing.type: Easing.OutCubic }
                           }
+                        }
+
+                        Rectangle {
+                          width: 10
+                          height: 10
+                          radius: 5
+                          color: provCard.modelData.color
+                        }
+
+                        Text {
+                          text: provCard.modelData.name
+                          color: root.foreground
+                          font.family: root.fontFamily
+                          font.pixelSize: Style.font.subtitle
+                          font.bold: true
+                        }
+
+                        Text {
+                          visible: provCard.modelData.tierLabel !== ""
+                          text: "(" + provCard.modelData.tierLabel + ")"
+                          color: root.muted
+                          font.family: root.fontFamily
+                          font.pixelSize: Style.font.caption
+                        }
+
+                        Item { Layout.fillWidth: true }
+
+                        // Header summary: the same headline limit the Dock Tracker
+                        // panel reports, so a provider reads identically on both
+                        // tabs. Falls back to peak usage for a provider whose
+                        // limits never reached the grouping (none tracked yet).
+                        Text {
+                          readonly property var head: root.headLimitOf(provCard.modelData.id)
+                          visible: !provCard.expanded && provCard.modelData.limitsCount > 0
+                          text: head
+                            ? head.shortLabel + "  "
+                              + root.makeAsciiBar(head.percent, 10, root.barStyle)
+                              + " " + head.percentInt + "%"
+                            : root.makeAsciiBar(provCard.peakPercent, 10, root.barStyle)
+                              + " " + Math.round(provCard.peakPercent * 100) + "%"
+                          color: (head ? head.percent : provCard.peakPercent) >= 0.95
+                            ? root.urgent
+                            : (root.coloredBars ? provCard.modelData.color : root.foreground)
+                          font.family: root.fontFamily
+                          font.pixelSize: 10
+                        }
+
+                        Rectangle {
+                          visible: provCard.pinnedCount > 0
+                          implicitWidth: provPinnedBadge.implicitWidth + Style.space(10)
+                          implicitHeight: Style.space(18)
+                          radius: root.radiusVal
+                          color: Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.18)
+                          border.color: root.accent
 
                           Text {
-                            text: root.makeAsciiBar(modelData.percent, 22, root.barStyle)
-                            color: modelData.percent >= 0.95 ? root.urgent : (root.coloredBars ? modelData.color : root.foreground)
+                            id: provPinnedBadge
+                            anchors.centerIn: parent
+                            text: "★ " + provCard.pinnedCount + " in dock"
+                            color: root.accent
                             font.family: root.fontFamily
-                            font.pixelSize: 11
+                            font.pixelSize: Style.font.caption
+                            font.bold: true
                           }
+                        }
 
-                          RowLayout {
+                        Text {
+                          text: provCard.modelData.limitsCount === 0
+                            ? "No limits configured"
+                            : (provCard.modelData.limitsCount === 1
+                              ? "1 limit active"
+                              : provCard.modelData.limitsCount + " limits active")
+                          color: provCard.modelData.limitsCount > 0 ? root.accent : root.muted
+                          font.family: root.fontFamily
+                          font.pixelSize: Style.font.caption
+                        }
+                      }
+
+                      MouseArea {
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: root.toggleProviderCollapsed(provCard.modelData.id)
+                      }
+                    }
+
+                    // Panel body — animates open / shut
+                    Item {
+                      id: provBody
+                      Layout.fillWidth: true
+                      clip: true
+                      implicitHeight: provCard.expanded ? provBodyCol.implicitHeight : 0
+                      visible: implicitHeight > 0.5
+
+                      Behavior on implicitHeight {
+                        NumberAnimation { duration: 140; easing.type: Easing.OutCubic }
+                      }
+
+                      ColumnLayout {
+                        id: provBodyCol
+                        width: provBody.width
+                        spacing: Style.space(8)
+
+                        // Auth text if unavailable
+                        Text {
+                          visible: modelData.authHelpText !== "" && modelData.limitsCount === 0
+                          text: modelData.authHelpText
+                          color: root.muted
+                          font.family: root.fontFamily
+                          font.pixelSize: Style.font.caption
+                          wrapMode: Text.WordWrap
+                          Layout.fillWidth: true
+                        }
+
+                        // Provider Limits List
+                        Repeater {
+                          model: modelData.limits
+
+                          Rectangle {
+                            required property var modelData
                             Layout.fillWidth: true
-                            Text {
-                              visible: modelData.resetsFormatted !== ""
-                              text: modelData.resetsFormatted
-                              color: root.muted
-                              font.family: root.fontFamily
-                              font.pixelSize: Style.font.caption
-                            }
-                            Item { Layout.fillWidth: true }
-                            // Quick Pin Button
-                            Rectangle {
-                              width: Style.space(90)
-                              height: Style.space(22)
-                              radius: root.radiusVal
-                              color: root.isLimitTracked(modelData.id) ? root.accent : root.cardBg
-                              border.color: root.accent
+                            implicitHeight: pLimCol.implicitHeight + Style.space(12)
+                            radius: root.radiusVal
+                            color: root.cardHover
 
-                              Text {
-                                anchors.centerIn: parent
-                                text: root.isLimitTracked(modelData.id) ? "★ In Dock" : "+ Track"
-                                color: root.isLimitTracked(modelData.id) ? "#000000" : root.foreground
-                                font.family: root.fontFamily
-                                font.pixelSize: 10
-                                font.bold: true
+                            ColumnLayout {
+                              id: pLimCol
+                              anchors.fill: parent
+                              anchors.margins: Style.space(8)
+                              spacing: 4
+
+                              RowLayout {
+                                Layout.fillWidth: true
+                                Text {
+                                  text: modelData.title
+                                  color: root.foreground
+                                  font.family: root.fontFamily
+                                  font.pixelSize: Style.font.bodySmall
+                                  font.bold: true
+                                }
+                                Item { Layout.fillWidth: true }
+                                Text {
+                                  text: modelData.percentInt + "%"
+                                  color: modelData.percent >= 0.95 ? root.urgent : (root.coloredBars ? modelData.color : root.foreground)
+                                  font.family: root.fontFamily
+                                  font.pixelSize: Style.font.bodySmall
+                                  font.bold: true
+                                }
                               }
 
-                              MouseArea {
-                                anchors.fill: parent
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: root.toggleTrackLimit(modelData.id)
+                              Text {
+                                text: root.makeAsciiBar(modelData.percent, 22, root.barStyle)
+                                color: modelData.percent >= 0.95 ? root.urgent : (root.coloredBars ? modelData.color : root.foreground)
+                                font.family: root.fontFamily
+                                font.pixelSize: 11
+                              }
+
+                              RowLayout {
+                                Layout.fillWidth: true
+                                Text {
+                                  visible: modelData.resetsFormatted !== ""
+                                  text: modelData.resetsFormatted
+                                  color: root.muted
+                                  font.family: root.fontFamily
+                                  font.pixelSize: Style.font.caption
+                                }
+                                Item { Layout.fillWidth: true }
+                                // Quick Pin Button
+                                Rectangle {
+                                  width: Style.space(90)
+                                  height: Style.space(22)
+                                  radius: root.radiusVal
+                                  color: root.isLimitTracked(modelData.id) ? root.accent : root.cardBg
+                                  border.color: root.accent
+
+                                  Text {
+                                    anchors.centerIn: parent
+                                    text: root.isLimitTracked(modelData.id) ? "★ In Dock" : "+ Track"
+                                    color: root.isLimitTracked(modelData.id) ? "#000000" : root.foreground
+                                    font.family: root.fontFamily
+                                    font.pixelSize: 10
+                                    font.bold: true
+                                  }
+
+                                  MouseArea {
+                                    anchors.fill: parent
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: root.toggleTrackLimit(modelData.id)
+                                  }
+                                }
                               }
                             }
                           }
@@ -1473,8 +2438,31 @@ BarWidget {
       return "ok"
     }
 
+    function nextStyle(): string {
+      root.cycleStyle()
+      return root.barStyle
+    }
+
+    function setStyle(style: string): string {
+      var styles = ["blocks", "shaded", "ascii", "retro", "squares", "braille"]
+      if (styles.indexOf(style) !== -1) {
+        root.saveSetting("barStyle", style)
+        return "ok: " + style
+      }
+      return "invalid style. available: " + styles.join(", ")
+    }
+
     function toggleLimit(id: string): string {
       root.toggleTrackLimit(id)
+      return "ok"
+    }
+
+    // Preview the announcement banner: kind is "depleted" or "reset".
+    function demoEvent(kind: string): string {
+      if (kind !== "depleted" && kind !== "reset") return "invalid kind. available: depleted, reset"
+      var limits = root.allLimits
+      var lim = limits && limits.length > 0 ? limits[0] : null
+      root.pushLimitEvent(kind, lim)
       return "ok"
     }
 

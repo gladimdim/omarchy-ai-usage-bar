@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "gladimdim.ai-limits",
   "name": "AI Limits Tracker",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "Dmytro Gladkyi",
   "license": "MIT",
   "description": "Old-school ASCII progress bar dock widget for tracking AI provider quotas and rate limits (Claude, Grok, Antigravity, etc.) with configurable multi-line tracker.",
