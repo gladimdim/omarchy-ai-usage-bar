@@ -1,0 +1,90 @@
+{
+  "schemaVersion": 1,
+  "id": "gladimdim.ai-limits",
+  "name": "AI Limits Tracker",
+  "version": "1.0.0",
+  "author": "Dmytro Gladkyi",
+  "license": "MIT",
+  "description": "Old-school ASCII progress bar dock widget for tracking AI provider quotas and rate limits (Claude, Grok, Antigravity, etc.) with configurable multi-line tracker.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Widget.qml"
+  },
+  "barWidget": {
+    "displayName": "AI Limits Tracker",
+    "description": "Old-school ASCII progress bars for AI rate limits in the dock",
+    "category": "AI",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "aliases": [
+      "ai-limits",
+      "ai-tracker",
+      "ai-quota",
+      "limits",
+      "quota",
+      "ascii-bar"
+    ],
+    "defaults": {
+      "tracked": ["claude:session-5-hour", "grok:weekly"],
+      "barLength": 16,
+      "barStyle": "blocks",
+      "showPercent": true,
+      "showReset": true,
+      "showLabel": true,
+      "coloredBars": true,
+      "refreshIntervalSec": 60
+    },
+    "schema": [
+      {
+        "key": "barLength",
+        "type": "integer",
+        "label": "ASCII Bar Length (characters)",
+        "min": 8,
+        "max": 32,
+        "step": 2,
+        "defaultValue": 16
+      },
+      {
+        "key": "barStyle",
+        "type": "string",
+        "label": "Progress Bar Style (blocks, shaded, ascii, retro, squares)",
+        "defaultValue": "blocks"
+      },
+      {
+        "key": "showPercent",
+        "type": "boolean",
+        "label": "Show Percentage in Dock",
+        "defaultValue": true
+      },
+      {
+        "key": "showReset",
+        "type": "boolean",
+        "label": "Show Reset Countdown in Dock",
+        "defaultValue": true
+      },
+      {
+        "key": "showLabel",
+        "type": "boolean",
+        "label": "Show Provider Short Label",
+        "defaultValue": true
+      },
+      {
+        "key": "coloredBars",
+        "type": "boolean",
+        "label": "Use Provider Signature Colors",
+        "defaultValue": true
+      },
+      {
+        "key": "refreshIntervalSec",
+        "type": "integer",
+        "label": "Refresh Interval (seconds)",
+        "min": 10,
+        "max": 600,
+        "step": 10,
+        "defaultValue": 60
+      }
+    ]
+  }
+}
