@@ -66,12 +66,12 @@ It makes **no network requests**. Everything it shows is read from the usage JSO
 ### 1. Clone the repository
 ```bash
 cd ~/Github
-git clone https://github.com/gladimdim/omarchy-ai-limits-plugin.git
+git clone https://github.com/gladimdim/omarchy-ai-usage-bar.git
 ```
 
 ### 2. Symlink into Omarchy plugins directory
 ```bash
-ln -s ~/Github/omarchy-ai-limits-plugin ~/.config/omarchy/plugins/gladimdim.ai-limits
+ln -s ~/Github/omarchy-ai-usage-bar ~/.config/omarchy/plugins/gladimdim.ai-limits
 ```
 
 ### 3. Enable the plugin in Omarchy shell
@@ -126,7 +126,7 @@ rm ~/.config/omarchy/plugins/gladimdim.ai-limits
 omarchy restart shell
 ```
 
-The plugin's settings live inside its own entry in `~/.config/omarchy/shell.json`, which disabling removes. Delete your clone (`rm -rf ~/Github/omarchy-ai-limits-plugin`) if you want the source gone too.
+The plugin's settings live inside its own entry in `~/.config/omarchy/shell.json`, which disabling removes. Delete your clone (`rm -rf ~/Github/omarchy-ai-usage-bar`) if you want the source gone too.
 
 The only file the collector writes outside that entry is a refreshed copy of Omarchy's own Antigravity usage cache, `~/.local/state/omarchy/agents/usage/antigravity.json`, and only when the [Antigravity usage plugin](https://github.com/jesseburlamaque/omarchy-antigravity-usage) is installed to produce it. That cache belongs to Omarchy's shared agent-usage state rather than to this plugin, so removal leaves it in place; delete it yourself if you want it gone.
 
