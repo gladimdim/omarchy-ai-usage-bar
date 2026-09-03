@@ -29,15 +29,32 @@ BarWidget {
   readonly property string fontFamily: bar ? bar.fontFamily : "JetBrainsMono Nerd Font"
   readonly property int radiusVal: Style.cornerRadius > 0 ? Math.min(6, Style.cornerRadius) : 6
 
-  // Settings from shell.json
-  readonly property var trackedSettings: setting("tracked", ["claude:session-5-hour", "grok:weekly"])
-  readonly property int barLength: Math.max(8, Math.min(32, Number(setting("barLength", 16))))
-  readonly property string barStyle: String(setting("barStyle", "blocks"))
-  readonly property bool showPercent: Boolean(setting("showPercent", true))
-  readonly property bool showReset: Boolean(setting("showReset", true))
-  readonly property bool showLabel: Boolean(setting("showLabel", true))
-  readonly property bool coloredBars: Boolean(setting("coloredBars", true))
-  readonly property int refreshIntervalSec: Math.max(10, Number(setting("refreshIntervalSec", 60)))
+  function toList(val, fallback) {
+    if (!val) return fallback ? fallback.slice() : []
+    var res = []
+    if (typeof val.length === "number") {
+      for (var i = 0; i < val.length; i++) res.push(val[i])
+      return res
+    }
+    return fallback ? fallback.slice() : []
+  }
+
+  // Settings from shell.json (Strictly capped at max 2, directly reactive to root.settings)
+  readonly property var trackedSettings: {
+    var raw = root.settings && root.settings.tracked !== undefined
+      ? root.settings.tracked
+      : ["claude:session-5-hour", "grok:weekly"]
+    return root.toList(raw, ["claude:session-5-hour", "grok:weekly"]).slice(0, 2)
+  }
+  readonly property int trackedCount: root.toList(trackedSettings, []).length
+  property string selectionWarning: ""
+  readonly property int barLength: Math.max(8, Math.min(32, Number(root.settings && root.settings.barLength !== undefined ? root.settings.barLength : 16)))
+  readonly property string barStyle: String(root.settings && root.settings.barStyle !== undefined ? root.settings.barStyle : "blocks")
+  readonly property bool showPercent: Boolean(root.settings && root.settings.showPercent !== undefined ? root.settings.showPercent : true)
+  readonly property bool showReset: Boolean(root.settings && root.settings.showReset !== undefined ? root.settings.showReset : true)
+  readonly property bool showLabel: Boolean(root.settings && root.settings.showLabel !== undefined ? root.settings.showLabel : true)
+  readonly property bool coloredBars: Boolean(root.settings && root.settings.coloredBars !== undefined ? root.settings.coloredBars : true)
+  readonly property int refreshIntervalSec: Math.max(10, Number(root.settings && root.settings.refreshIntervalSec !== undefined ? root.settings.refreshIntervalSec : 60))
 
   // Data state
   property var limitsData: ({ "providers": [], "allLimits": [] })
@@ -59,7 +76,7 @@ BarWidget {
 
   function updateTrackedItems() {
     var result = []
-    var trackedList = Array.isArray(trackedSettings) ? trackedSettings : []
+    var trackedList = root.toList(trackedSettings, []).slice(0, 2)
     var limits = limitsData && limitsData.allLimits ? limitsData.allLimits : []
     var byId = {}
 
@@ -85,7 +102,7 @@ BarWidget {
       }
     }
 
-    trackedItems = result
+    trackedItems = result.slice(0, 2)
   }
 
   onLimitsDataChanged: updateTrackedItems()
@@ -128,20 +145,23 @@ BarWidget {
   }
 
   function toggleTrackLimit(limitId) {
-    var trackedList = Array.isArray(trackedSettings) ? trackedSettings.slice() : []
+    var trackedList = Array.isArray(trackedSettings) ? trackedSettings.slice(0, 2) : []
     var idx = trackedList.indexOf(limitId)
 
     if (idx !== -1) {
       trackedList.splice(idx, 1)
+      root.selectionWarning = ""
     } else {
       if (trackedList.length >= 2) {
-        // Keep at most 2: drop the oldest and append the new one
-        trackedList.shift()
+        root.selectionWarning = "Maximum 2 limits can be tracked in the dock. Uncheck one first."
+        warningTimer.restart()
+        return
       }
       trackedList.push(limitId)
+      root.selectionWarning = ""
     }
 
-    saveSetting("tracked", trackedList)
+    saveSetting("tracked", trackedList.slice(0, 2))
   }
 
   function saveSetting(key, value) {
@@ -216,6 +236,14 @@ BarWidget {
     running: root.popupOpen
     repeat: true
     onTriggered: root.triggerRefresh(false)
+  }
+
+  Timer {
+    id: warningTimer
+    interval: 3500
+    repeat: false
+    running: false
+    onTriggered: root.selectionWarning = ""
   }
 
   Component.onCompleted: {
@@ -647,6 +675,51 @@ BarWidget {
           foreground: root.foreground
         }
 
+        // Warning banner when user attempts to select more than 2
+        Rectangle {
+          id: warningBanner
+          visible: root.selectionWarning !== ""
+          Layout.fillWidth: true
+          implicitHeight: warningRow.implicitHeight + Style.space(12)
+          radius: root.radiusVal
+          color: Qt.rgba(root.urgent.r, root.urgent.g, root.urgent.b, 0.18)
+          border.color: root.urgent
+          border.width: 1
+
+          RowLayout {
+            id: warningRow
+            anchors.fill: parent
+            anchors.margins: Style.space(8)
+            spacing: Style.space(8)
+
+            Text {
+              text: "⚠️"
+              font.pixelSize: 13
+            }
+
+            Text {
+              Layout.fillWidth: true
+              text: root.selectionWarning
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              font.bold: true
+              wrapMode: Text.Wrap
+            }
+
+            Text {
+              text: "✕"
+              color: root.muted
+              font.pixelSize: 12
+              MouseArea {
+                anchors.fill: parent
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.selectionWarning = ""
+              }
+            }
+          }
+        }
+
         // Scrollable Tab Contents
         Flickable {
           id: flick
@@ -759,13 +832,38 @@ BarWidget {
                 }
               }
 
-              // Selector Section
-              Text {
-                text: "SELECT LIMITS TO TRACK IN DOCK (UP TO 2):"
-                color: root.muted
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
-                font.bold: true
+              // Selector Section Header
+              RowLayout {
+                Layout.fillWidth: true
+                spacing: Style.space(8)
+
+                Text {
+                  text: "SELECT LIMITS TO TRACK IN DOCK:"
+                  color: root.muted
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  font.bold: true
+                }
+
+                Item { Layout.fillWidth: true }
+
+                Rectangle {
+                  implicitWidth: countBadgeText.implicitWidth + Style.space(14)
+                  implicitHeight: Style.space(20)
+                  radius: root.radiusVal
+                  color: root.trackedCount >= 2 ? Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.18) : root.cardBg
+                  border.color: root.trackedCount >= 2 ? root.accent : root.cardBorder
+
+                  Text {
+                    id: countBadgeText
+                    anchors.centerIn: parent
+                    text: root.trackedCount + " / 2 selected" + (root.trackedCount >= 2 ? " (Max)" : "")
+                    color: root.trackedCount >= 2 ? root.accent : root.muted
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                    font.bold: root.trackedCount >= 2
+                  }
+                }
               }
 
               // List of all limits for user to toggle
@@ -778,6 +876,7 @@ BarWidget {
                   Layout.fillWidth: true
                   implicitHeight: rowLayout.implicitHeight + Style.space(16)
                   radius: root.radiusVal
+                  opacity: (!root.isLimitTracked(modelData.id) && root.trackedCount >= 2) ? 0.6 : 1.0
                   color: root.isLimitTracked(modelData.id)
                     ? Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.12)
                     : (rowHover.containsMouse ? root.cardHover : root.cardBg)
@@ -798,7 +897,9 @@ BarWidget {
                       height: Style.space(20)
                       radius: root.radiusVal
                       color: root.isLimitTracked(modelData.id) ? root.accent : "transparent"
-                      border.color: root.isLimitTracked(modelData.id) ? root.accent : root.muted
+                      border.color: root.isLimitTracked(modelData.id)
+                        ? root.accent
+                        : (root.trackedCount >= 2 ? root.cardBorder : root.muted)
                       border.width: 1.5
 
                       Text {
@@ -808,6 +909,15 @@ BarWidget {
                         font.bold: true
                         font.pixelSize: 12
                         visible: root.isLimitTracked(modelData.id)
+                      }
+
+                      Text {
+                        anchors.centerIn: parent
+                        text: "−"
+                        color: root.muted
+                        font.bold: true
+                        font.pixelSize: 12
+                        visible: !root.isLimitTracked(modelData.id) && root.trackedCount >= 2
                       }
                     }
 
@@ -866,8 +976,17 @@ BarWidget {
                     id: rowHover
                     anchors.fill: parent
                     hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: root.toggleTrackLimit(modelData.id)
+                    cursorShape: (!root.isLimitTracked(modelData.id) && root.trackedCount >= 2)
+                      ? Qt.ForbiddenCursor
+                      : Qt.PointingHandCursor
+                    onClicked: {
+                      if (!root.isLimitTracked(modelData.id) && root.trackedCount >= 2) {
+                        root.selectionWarning = "Maximum 2 limits can be tracked in the dock. Uncheck one first."
+                        warningTimer.restart()
+                        return
+                      }
+                      root.toggleTrackLimit(modelData.id)
+                    }
                   }
                 }
               }
@@ -1004,13 +1123,18 @@ BarWidget {
                               width: Style.space(90)
                               height: Style.space(22)
                               radius: root.radiusVal
+                              opacity: (!root.isLimitTracked(modelData.id) && root.trackedCount >= 2) ? 0.5 : 1.0
                               color: root.isLimitTracked(modelData.id) ? root.accent : root.cardBg
-                              border.color: root.accent
+                              border.color: root.isLimitTracked(modelData.id) ? root.accent : (root.trackedCount >= 2 ? root.muted : root.accent)
 
                               Text {
                                 anchors.centerIn: parent
-                                text: root.isLimitTracked(modelData.id) ? "★ In Dock" : "+ Track"
-                                color: root.isLimitTracked(modelData.id) ? "#000000" : root.foreground
+                                text: root.isLimitTracked(modelData.id)
+                                  ? "★ In Dock"
+                                  : (root.trackedCount >= 2 ? "Max (2/2)" : "+ Track")
+                                color: root.isLimitTracked(modelData.id)
+                                  ? "#000000"
+                                  : (root.trackedCount >= 2 ? root.muted : root.foreground)
                                 font.family: root.fontFamily
                                 font.pixelSize: 10
                                 font.bold: true
@@ -1018,8 +1142,17 @@ BarWidget {
 
                               MouseArea {
                                 anchors.fill: parent
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: root.toggleTrackLimit(modelData.id)
+                                cursorShape: (!root.isLimitTracked(modelData.id) && root.trackedCount >= 2)
+                                  ? Qt.ForbiddenCursor
+                                  : Qt.PointingHandCursor
+                                onClicked: {
+                                  if (!root.isLimitTracked(modelData.id) && root.trackedCount >= 2) {
+                                    root.selectionWarning = "Maximum 2 limits can be tracked in the dock. Uncheck one first."
+                                    warningTimer.restart()
+                                    return
+                                  }
+                                  root.toggleTrackLimit(modelData.id)
+                                }
                               }
                             }
                           }
@@ -1343,6 +1476,7 @@ BarWidget {
       return JSON.stringify({
         scriptPath: root.scriptPath,
         procRunning: collectorProc.running,
+        settings: root.settings,
         trackedSettings: root.trackedSettings,
         trackedCount: root.trackedItems.length,
         limitsCount: root.allLimits ? root.allLimits.length : -1,
