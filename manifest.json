@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "gladimdim.ai-limits",
   "name": "AI Usage Bar",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "author": "Dmytro Gladkyi",
   "license": "MIT",
   "description": "Claude Code, Grok, Codex and Antigravity usage, quota and rate limit tracking as old-school ASCII progress bars in your Omarchy dock.",

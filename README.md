@@ -63,23 +63,43 @@ It makes **no network requests**. Everything it shows is read from the usage JSO
 
 ## 🚀 Installation
 
-### 1. Clone the repository
+Install it with Omarchy's own plugin command — no cloning, no symlinks:
+
 ```bash
-cd ~/Github
-git clone https://github.com/gladimdim/omarchy-ai-usage-bar.git
+omarchy plugin install https://github.com/gladimdim/omarchy-ai-usage-bar.git --enable
 ```
 
-### 2. Symlink into Omarchy plugins directory
+(`omarchy plugin add` is the same command under its original name.)
+
+Omarchy does the rest for you:
+
+1. Shows the standard "plugins run unsandboxed code" warning and asks you to confirm the URL.
+2. Clones the repo into `~/.config/omarchy/plugins/gladimdim.ai-limits` and validates it against the plugin manifest schema.
+3. Asks which bar section to put it in — press Enter to accept the manifest default, `right`.
+4. Enables it live. The widget shows up in your bar immediately; **no shell restart needed**.
+
+### Unattended install
+
+`--yes` skips both prompts and places the widget in the manifest's default section (`right`):
+
 ```bash
-ln -s ~/Github/omarchy-ai-usage-bar ~/.config/omarchy/plugins/gladimdim.ai-limits
+omarchy plugin install https://github.com/gladimdim/omarchy-ai-usage-bar.git --enable --yes
 ```
 
-### 3. Enable the plugin in Omarchy shell
+### Install now, enable later
+
+Drop `--enable` to just add the plugin, then enable it whenever you like and choose exactly where it sits:
+
 ```bash
+omarchy plugin install https://github.com/gladimdim/omarchy-ai-usage-bar.git
 omarchy plugin enable gladimdim.ai-limits --section right
 ```
 
-Or manually add it to your `~/.config/omarchy/shell.json` in `bar.layout.right`:
+`omarchy plugin enable` also takes `--index`, `--before <widget-id>` and `--after <widget-id>` if you want it in a particular spot within that section.
+
+### Optional: configure by hand
+
+Everything is configurable from the popup dashboard, but you can also edit the widget's entry in `~/.config/omarchy/shell.json` directly:
 
 ```json
 {
@@ -101,12 +121,17 @@ Or manually add it to your `~/.config/omarchy/shell.json` in `bar.layout.right`:
 }
 ```
 
-### 4. Restart or reload Omarchy shell
+If you ever need to reload the shell, use `omarchy restart shell`, **not** `omarchy refresh shell` — the latter resets `~/.config/omarchy/shell.json` to Omarchy defaults and discards your bar layout and plugin settings.
+
+---
+
+## 🔄 Updating
+
 ```bash
-omarchy restart shell
+omarchy plugin update gladimdim.ai-limits
 ```
 
-> Use `omarchy restart shell`, **not** `omarchy refresh shell` — the latter resets `~/.config/omarchy/shell.json` to Omarchy defaults and discards your bar layout and plugin settings.
+It fetches upstream, shows you the diff, fast-forwards the installed copy, and re-validates the manifest — rolling the update back if validation fails. Add `--yes` to skip the diff and the confirmation. Running `omarchy plugin update` with no id updates every git-managed plugin you have.
 
 ---
 
@@ -116,17 +141,17 @@ omarchy restart shell
 omarchy plugin remove gladimdim.ai-limits
 ```
 
-That one command does the whole job: it disables the widget (dropping it from your bar layout), unlinks the symlink — or deletes the directory if you cloned straight into `~/.config/omarchy/plugins/` — and rescans the shell. It asks for confirmation first; pass `--yes` to skip the prompt.
+That one command does the whole job: it disables the widget (dropping it from your bar layout), deletes `~/.config/omarchy/plugins/gladimdim.ai-limits`, and rescans the shell. It asks for confirmation first; pass `--yes` to skip the prompt.
 
 To take it out by hand instead:
 
 ```bash
 omarchy plugin disable gladimdim.ai-limits
-rm ~/.config/omarchy/plugins/gladimdim.ai-limits
+rm -rf ~/.config/omarchy/plugins/gladimdim.ai-limits
 omarchy restart shell
 ```
 
-The plugin's settings live inside its own entry in `~/.config/omarchy/shell.json`, which disabling removes. Delete your clone (`rm -rf ~/Github/omarchy-ai-usage-bar`) if you want the source gone too.
+The plugin's settings live inside its own entry in `~/.config/omarchy/shell.json`, which disabling removes.
 
 The only file the collector writes outside that entry is a refreshed copy of Omarchy's own Antigravity usage cache, `~/.local/state/omarchy/agents/usage/antigravity.json`, and only when the [Antigravity usage plugin](https://github.com/jesseburlamaque/omarchy-antigravity-usage) is installed to produce it. That cache belongs to Omarchy's shared agent-usage state rather than to this plugin, so removal leaves it in place; delete it yourself if you want it gone.
 
