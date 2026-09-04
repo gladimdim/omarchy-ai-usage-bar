@@ -15,8 +15,16 @@ BarWidget {
   property bool popupOpen: false
   property int activeTab: 0 // 0: Dock Tracker, 1: All Providers, 2: Style & Options
   property bool refreshing: false
+  property bool currentRefreshIsForce: false
+  property bool pendingRefreshForce: false
   property string statusMessage: ""
   property double nowMs: Date.now()
+
+  onPopupOpenChanged: {
+    if (popupOpen) {
+      root.triggerRefresh(true)
+    }
+  }
 
   readonly property color foreground: bar ? bar.foreground : Color.foreground
   readonly property color background: Color.popups.background
@@ -366,8 +374,17 @@ BarWidget {
   }
 
   function triggerRefresh(force) {
-    if (collectorProc.running) return
+    if (collectorProc.running) {
+      if (force === true && !root.currentRefreshIsForce) {
+        root.pendingRefreshForce = true
+      }
+      return
+    }
+    root.currentRefreshIsForce = (force === true)
     root.refreshing = true
+    if (force === true) {
+      autoRefreshTimer.restart()
+    }
     collectorProc.command = force === true
       ? ["python3", root.scriptPath, "--refresh"]
       : ["python3", root.scriptPath]
@@ -375,7 +392,9 @@ BarWidget {
   }
 
   function applyData(rawText) {
-    root.refreshing = false
+    if (!root.pendingRefreshForce) {
+      root.refreshing = false
+    }
     var raw = String(rawText || "").trim()
     if (raw === "") return
     try {
@@ -409,7 +428,15 @@ BarWidget {
     }
 
     onExited: {
-      root.refreshing = false
+      root.currentRefreshIsForce = false
+      if (root.pendingRefreshForce) {
+        root.pendingRefreshForce = false
+        Qt.callLater(function() {
+          root.triggerRefresh(true)
+        })
+      } else {
+        root.refreshing = false
+      }
     }
   }
 
@@ -418,8 +445,8 @@ BarWidget {
     interval: root.refreshIntervalSec * 1000
     running: true
     repeat: true
-    triggeredOnStart: true
-    onTriggered: root.triggerRefresh(false)
+    triggeredOnStart: false
+    onTriggered: root.triggerRefresh(true)
   }
 
   Timer {
@@ -438,7 +465,7 @@ BarWidget {
   }
 
   Component.onCompleted: {
-    root.triggerRefresh(false)
+    root.triggerRefresh(true)
   }
 
   function tooltipContent() {
@@ -456,8 +483,11 @@ BarWidget {
   }
 
   function open() {
-    popupOpen = true
-    triggerRefresh(false)
+    if (!popupOpen) {
+      popupOpen = true
+    } else {
+      triggerRefresh(true)
+    }
   }
 
   function close() {
@@ -2235,6 +2265,54 @@ BarWidget {
                       anchors.fill: parent
                       cursorShape: Qt.PointingHandCursor
                       onClicked: root.saveSetting("barLength", modelData)
+                    }
+                  }
+                }
+              }
+
+              // Refresh Interval Selector
+              Text {
+                text: "STATUS BAR REFRESH INTERVAL:"
+                color: root.muted
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                font.bold: true
+              }
+
+              RowLayout {
+                Layout.fillWidth: true
+                spacing: 6
+
+                Repeater {
+                  model: [
+                    { sec: 30, label: "30s" },
+                    { sec: 60, label: "1m" },
+                    { sec: 120, label: "2m" },
+                    { sec: 300, label: "5m" },
+                    { sec: 600, label: "10m" }
+                  ]
+
+                  Rectangle {
+                    required property var modelData
+                    Layout.fillWidth: true
+                    height: Style.space(32)
+                    radius: root.radiusVal
+                    color: root.refreshIntervalSec === modelData.sec ? root.accent : root.cardBg
+                    border.color: root.cardBorder
+
+                    Text {
+                      anchors.centerIn: parent
+                      text: modelData.label
+                      color: root.refreshIntervalSec === modelData.sec ? "#000000" : root.foreground
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.caption
+                      font.bold: true
+                    }
+
+                    MouseArea {
+                      anchors.fill: parent
+                      cursorShape: Qt.PointingHandCursor
+                      onClicked: root.saveSetting("refreshIntervalSec", modelData.sec)
                     }
                   }
                 }
