@@ -758,6 +758,9 @@ BarWidget {
   property var activeEvent: null
 
   readonly property int eventStaleMs: 30 * 60 * 1000
+  // How long one announcement plays before it auto-dismisses, both in the
+  // popup banner and as the dock bar animation.
+  readonly property int eventDurationMs: 30000
 
   readonly property var depletedQuips: [
     "Ooops, tokens for %1 depleted!",
@@ -848,29 +851,27 @@ BarWidget {
     root.percentsSeeded = true
   }
 
-  // Banner lives for 15s of popup time, or until the user clicks it away.
+  // Announcement lives for eventDurationMs (30s) whether the popup is open
+  // or not, then auto-dismisses from both the popup banner and the dock bar
+  // animation. Clicking the banner still dismisses it early.
   Timer {
     id: eventTimer
-    interval: 15000
+    interval: root.eventDurationMs
     repeat: false
-    running: root.activeEvent !== null && root.popupOpen
+    running: root.activeEvent !== null
     onTriggered: root.advanceEvent()
   }
 
-  // Nobody opened the popup — retire the announcement once it goes stale.
-  Timer {
-    interval: 60000
-    repeat: true
-    running: root.activeEvent !== null && !root.popupOpen
-    onTriggered: {
-      if (root.activeEvent && Date.now() - root.activeEvent.at > root.eventStaleMs) root.advanceEvent()
-    }
-  }
+  // Each queued announcement gets its own full 30s once it becomes active:
+  // without this, promoting event B while the timer is already running for
+  // event A would cut B's lifetime short.
+  onActiveEventChanged: if (root.activeEvent !== null) eventTimer.restart()
 
   // ------------------------------------------- Dock animation during an event
-  // While an announcement is pending and the popup is closed, the tracked rows
+  // While an announcement is active and the popup is closed, the tracked rows
   // in the bar animate: a scanner sweeps the bar of a depleted limit, a refill
-  // wave runs across a limit that just reset.
+  // wave runs across a limit that just reset. The eventTimer above clears the
+  // active event after eventDurationMs (30s), which stops this animation too.
   readonly property bool dockEventActive: root.activeEvent !== null && !root.popupOpen
   readonly property bool dockEventReset: root.dockEventActive && root.activeEvent.kind === "reset"
 
@@ -1268,7 +1269,7 @@ BarWidget {
         }
 
         // Limit lifecycle announcement — scrolls past like an old <marquee>,
-        // for 15 seconds or until it is clicked away.
+        // for 30 seconds or until it is clicked away.
         Rectangle {
           id: eventBanner
           visible: root.activeEvent !== null
