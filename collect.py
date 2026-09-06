@@ -554,8 +554,10 @@ def ensure_subscription_data() -> None:
                     },
                 )
             except Exception as exc:
+                kept = (USAGE_DIR / f"{name}.json").exists()
+                suffix = "; keeping last good data" if kept else "; provider stays unconfigured"
                 print(
-                    f"ai-usage-bar: {display_name} usage refresh failed ({_subscription_transport_error(exc)}); keeping last good data",
+                    f"ai-usage-bar: {display_name} usage refresh failed ({_subscription_transport_error(exc)}){suffix}",
                     file=sys.stderr,
                 )
 
