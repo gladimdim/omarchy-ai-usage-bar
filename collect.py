@@ -208,6 +208,10 @@ OPENCODE_USAGE_URL = "https://opencode.ai/zen/go/v1/usage"
 COMMANDCODE_CREDITS_URL = "https://api.commandcode.ai/alpha/billing/credits"
 
 SUBSCRIPTION_TIMEOUT_S = 6
+# urllib timeouts are per socket operation, so a slow-drip response can hold
+# the collector for roughly 2x SUBSCRIPTION_TIMEOUT_S. The chunked read below
+# enforces this total wall-clock deadline on top of the socket timeout.
+SUBSCRIPTION_TOTAL_DEADLINE_S = 12
 MAX_RESPONSE_BYTES = 4096
 SUBSCRIPTION_USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) omarchy-ai-usage-bar"
 SUBSCRIPTION_ENV_FILE = Path(os.path.expanduser("~/.config/omarchy/ai-limits.env"))
@@ -245,9 +249,13 @@ def _load_subscription_env_file() -> None:
     """Load KEY=VALUE pairs from SUBSCRIPTION_ENV_FILE into os.environ (once).
 
     Only the keys this plugin understands are accepted; unknown lines are
-    ignored. Values are taken verbatim (optional ``export`` prefix, surrounding
-    single/double quotes and trailing comments stripped) — no interpolation,
-    so nothing in the file is ever executed.
+    ignored. Values are taken verbatim: an optional ``export`` prefix and
+    surrounding single/double quotes are stripped, and unquoted values get a
+    trailing ``# comment`` removed (dotenv convention: no bare ``#`` inside an
+    unquoted value). Nothing is interpolated or executed. If a key appears
+    more than once, the first occurrence wins (``setdefault``) — unlike shell
+    ``export`` semantics, but predictable and it lets real environment
+    variables always take precedence over the file.
     """
     path = SUBSCRIPTION_ENV_FILE
     try:
@@ -269,6 +277,11 @@ def _load_subscription_env_file() -> None:
                     end = value.find(quote, 1)
                     if end != -1:
                         value = value[1:end]
+                elif " #" in value:
+                    # Unquoted value: drop a trailing comment (KEY=x # note).
+                    value = value.split(" #", 1)[0].rstrip()
+                if not value:
+                    continue
                 os.environ.setdefault(key, value)
     except Exception as exc:
         print(f"ai-usage-bar: could not read {path}: {type(exc).__name__}", file=sys.stderr)
@@ -292,9 +305,22 @@ def _subscription_request_json(url: str, api_key: str):
         },
     )
     with _SUBSCRIPTION_OPENER.open(request, timeout=SUBSCRIPTION_TIMEOUT_S) as response:
-        raw = response.read(MAX_RESPONSE_BYTES + 1)
-        if len(raw) > MAX_RESPONSE_BYTES:
-            raise ValueError("response-too-large")
+        # Chunked read: enforces the response-size cap exactly and adds a total
+        # wall-clock deadline (socket timeouts only bound single operations).
+        chunks: List[bytes] = []
+        total = 0
+        deadline = time.monotonic() + SUBSCRIPTION_TOTAL_DEADLINE_S
+        while True:
+            if time.monotonic() > deadline:
+                raise TimeoutError("response deadline exceeded")
+            chunk = response.read(1024)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > MAX_RESPONSE_BYTES:
+                raise ValueError("response-too-large")
+            chunks.append(chunk)
+        raw = b"".join(chunks)
     return json.loads(raw.decode("utf-8", errors="replace"))
 
 
@@ -335,16 +361,13 @@ def _fetch_opencode_go(api_key: str) -> Dict[str, Any]:
         raise ValueError("unexpected-response")
 
     limits: List[Dict[str, Any]] = []
-    headline: Optional[float] = None
     detail_parts: List[str] = []
     for window_id, title in _opencode_windows:
         window = raw_usage.get(window_id)
         if not isinstance(window, dict) or window.get("percent") is None:
             continue
-        percent = _finite(window["percent"])
+        percent = min(100.0, max(0.0, _finite(window["percent"])))
         resets_at = window.get("resetsAt") if isinstance(window.get("resetsAt"), str) else ""
-        if headline is None:
-            headline = percent
         detail_parts.append(f"{title} {round(percent)}%")
         limits.append({"title": _clamp_text(title, 60), "percent": percent / 100.0, "resetsAt": resets_at})
     if not limits:
@@ -354,7 +377,6 @@ def _fetch_opencode_go(api_key: str) -> Dict[str, Any]:
         "tierLabel": _clamp_text("Subscription", 40),
         "usageStatusText": _clamp_text(" · ".join(detail_parts), 160),
         "limits": limits,
-        "headline_percent": headline,
     }
 
 
@@ -377,7 +399,6 @@ def _fetch_command_code(api_key: str) -> Dict[str, Any]:
 
     limits = []
     detail_parts: List[str] = []
-    headline: Optional[float] = None
     for raw_key, title in (("fiveHour", "5h"), ("weekly", "Weekly")):
         window = window_limits.get(raw_key) if isinstance(window_limits, dict) else None
         if not isinstance(window, dict):
@@ -388,15 +409,19 @@ def _fetch_command_code(api_key: str) -> Dict[str, Any]:
             continue
         percent = round(min(100.0, max(0.0, used / cap * 100.0)), 1)
         # resetAt is epoch ms — convert to the ISO instant the collector expects.
+        # Accept numeric strings too; the API has sent both shapes.
         reset_ms = window.get("resetAt")
+        if isinstance(reset_ms, str):
+            try:
+                reset_ms = float(reset_ms)
+            except ValueError:
+                reset_ms = None
         reset_iso = ""
         if isinstance(reset_ms, (int, float)) and reset_ms > 0:
             try:
                 reset_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(reset_ms / 1000.0))
             except (ValueError, OverflowError, OSError):
                 reset_iso = ""
-        if headline is None:
-            headline = percent
         detail_parts.append(f"{title} {round(percent)}%")
         limits.append({"title": _clamp_text(title, 60), "percent": percent / 100.0, "resetsAt": reset_iso})
     if not limits:
@@ -408,7 +433,6 @@ def _fetch_command_code(api_key: str) -> Dict[str, Any]:
         "tierLabel": _clamp_text(f"${total_remaining:,.2f} left" if total_remaining > 0 else "Subscription", 40),
         "usageStatusText": _clamp_text(" · ".join(detail_parts), 160),
         "limits": limits,
-        "headline_percent": headline,
     }
 
 
@@ -421,6 +445,10 @@ def _write_usage_file(name: str, payload: Dict[str, Any]) -> None:
     tmp_dest = USAGE_DIR / f".{name}.{os.getpid()}.json.tmp"
     with open(tmp_dest, "w", encoding="utf-8") as fh:
         json.dump(payload, fh, indent=2)
+        # Flush to disk before the atomic swap so a crash can never leave a
+        # truncated destination file behind.
+        fh.flush()
+        os.fsync(fh.fileno())
     os.replace(tmp_dest, dest)
 
 
@@ -455,62 +483,88 @@ def ensure_subscription_data() -> None:
     oc_key = _read_subscription_key(("OPENCODE_GO_API_KEY", "OPENCODE_ZEN_API_KEY"))
     cc_key = _read_subscription_key(("COMMANDCODE_API_KEY",))
 
+    omarchy_tracked = False
     omarchy_opencode_path = USAGE_DIR / "opencode.json"
-    if oc_key and omarchy_opencode_path.exists():
+    if omarchy_opencode_path.exists():
         try:
             with open(omarchy_opencode_path, "r", encoding="utf-8") as fh:
                 if json.load(fh).get("ready"):
-                    oc_key = None
-                    _write_usage_file(
-                        "opencode-go",
-                        {
-                            "id": "opencode-go",
-                            "name": "OpenCode Go",
-                            "ready": True,
-                            "hasLocalStats": False,
-                            "usageStatusText": "Tracked by Omarchy's OpenCode integration",
-                            "limits": [],
-                        },
-                    )
-        except Exception:
-            pass
-
-    for name, display_name, api_key, fetch, key_names in (
-        (
-            "opencode-go",
-            "OpenCode Go",
-            oc_key,
-            _fetch_opencode_go,
-            "OPENCODE_GO_API_KEY (or OPENCODE_ZEN_API_KEY)",
-        ),
-        ("commandcode", "Command Code", cc_key, _fetch_command_code, "COMMANDCODE_API_KEY"),
-    ):
-        if not api_key:
-            if not (USAGE_DIR / f"{name}.json").exists():
-                _write_subscription_stub(
-                    name, display_name, f"Set {key_names} in your environment or ~/.config/omarchy/ai-limits.env."
-                )
-            continue
-        try:
-            result = fetch(api_key)
-            _write_usage_file(
-                name,
-                {
-                    "id": name,
-                    "name": display_name,
-                    "ready": True,
-                    "hasLocalStats": False,
-                    "tierLabel": result["tierLabel"],
-                    "usageStatusText": result["usageStatusText"],
-                    "limits": result["limits"],
-                    "updatedAt": dt.datetime.now(dt.timezone.utc).isoformat(),
-                },
-            )
+                    omarchy_tracked = True
+                    if oc_key:
+                        # Omarchy's integration already reports OpenCode
+                        # usage; skip the live fetch so the provider never
+                        # shows twice under two ids.
+                        oc_key = None
         except Exception as exc:
             print(
-                f"ai-usage-bar: {display_name} usage refresh failed ({_subscription_transport_error(exc)}); keeping last good data",
+                f"ai-usage-bar: could not read {omarchy_opencode_path} ({type(exc).__name__}); OpenCode Go may duplicate Omarchy's OpenCode entry",
                 file=sys.stderr,
             )
+
+    def _ensure_loop() -> None:
+        for name, display_name, api_key, fetch, key_names in (
+            (
+                "opencode-go",
+                "OpenCode Go",
+                oc_key,
+                _fetch_opencode_go,
+                "OPENCODE_GO_API_KEY (or OPENCODE_ZEN_API_KEY)",
+            ),
+            ("commandcode", "Command Code", cc_key, _fetch_command_code, "COMMANDCODE_API_KEY"),
+        ):
+            # The whole block — stub writes included — sits inside the try so a
+            # failure to write (unwritable dir, disk full) degrades to a stderr
+            # line instead of killing the collector and blanking every provider.
+            try:
+                if not api_key:
+                    if name == "opencode-go" and omarchy_tracked:
+                        # No Go key, but Omarchy's own OpenCode integration is
+                        # active: point the card at that instead of setup help.
+                        _write_usage_file(
+                            "opencode-go",
+                            {
+                                "id": "opencode-go",
+                                "name": "OpenCode Go",
+                                "ready": True,
+                                "hasLocalStats": False,
+                                "usageStatusText": "Tracked by Omarchy's OpenCode integration",
+                                "limits": [],
+                            },
+                        )
+                    else:
+                        # Unconfigured (or the key was just removed): write the
+                        # ready:false stub the docstring promises, replacing any
+                        # stale marker or outdated quota data.
+                        _write_subscription_stub(
+                            name, display_name, f"Set {key_names} in your environment or ~/.config/omarchy/ai-limits.env."
+                        )
+                    continue
+                result = fetch(api_key)
+                _write_usage_file(
+                    name,
+                    {
+                        "id": name,
+                        "name": display_name,
+                        "ready": True,
+                        "hasLocalStats": False,
+                        "tierLabel": result["tierLabel"],
+                        "usageStatusText": result["usageStatusText"],
+                        "limits": result["limits"],
+                        "updatedAt": dt.datetime.now(dt.timezone.utc).isoformat(),
+                    },
+                )
+            except Exception as exc:
+                print(
+                    f"ai-usage-bar: {display_name} usage refresh failed ({_subscription_transport_error(exc)}); keeping last good data",
+                    file=sys.stderr,
+                )
+
+    try:
+        _ensure_loop()
+    except Exception as exc:
+        # Belt and braces: nothing above should raise, but the collector must
+        # never die here — the usage directory may hold other providers' data.
+        print(f"ai-usage-bar: subscription refresh aborted ({type(exc).__name__})", file=sys.stderr)
 
 
 def ensure_antigravity_data() -> None:
