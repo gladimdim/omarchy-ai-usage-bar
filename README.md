@@ -3,7 +3,7 @@
 [![Omarchy Plugin](https://img.shields.io/badge/omarchy-plugin-blue.svg)](https://github.com/omacom/omarchy)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-An old-school ASCII progress bar widget for the [Omarchy](https://github.com/omacom/omarchy) dock that tracks usage, quotas and rate limits for your installed AI providers — Claude Code, Grok, Codex, Antigravity and more — in real time.
+An old-school ASCII progress bar widget for the [Omarchy](https://github.com/omacom/omarchy) dock that tracks usage, quotas and rate limits for your installed AI providers — Claude Code, Grok, Codex, Antigravity, OpenCode Go, Command Code and more — in real time.
 
 ```text
 +-------------------------------------------------------------+
@@ -25,6 +25,8 @@ An old-school ASCII progress bar widget for the [Omarchy](https://github.com/oma
   - **Grok**: Weekly allowance, Grok Build, Grok Chat, Grok Tasks.
   - **Google Antigravity**: Thinking Models Quota, Flash Models Quota, Claude 5h Session Window.
   - **OpenAI Codex**, **Fireworks AI**, **OpenCode**, and custom agent integrations.
+  - **OpenCode Go**: rolling 5-hour, weekly and monthly usage windows (fetched from the OpenCode Go API when an API key is configured).
+  - **Command Code**: 5-hour and weekly usage windows plus the remaining USD credit balance (fetched from the Command Code API when an API key is configured).
 - **🎨 6 ASCII Styles**:
   - `blocks`: `[████████░░░░░░░░]` (Default modern blocks)
   - `shaded`: `[▓▓▓▓▓▓▓▓░░░░░░░░]` (Dithered shading)
@@ -57,7 +59,16 @@ An old-school ASCII progress bar widget for the [Omarchy](https://github.com/oma
 - **Omarchy** with the Quickshell-based shell (plugin `schemaVersion` 1).
 - **`python3`** on `PATH`. The collector (`collect.py`) uses only the standard library — no `pip` packages, no virtualenv.
 
-It makes **no network requests**. Everything it shows is read from the usage JSON Omarchy's own agent integrations already write to `~/.local/state/omarchy/agents/usage/`. To keep that fresh it may run Omarchy's local updater (`~/.config/omarchy/agents/update` or `/usr/share/omarchy/bin/omarchy-agent-usage-update`) and, when the Antigravity usage plugin is installed, that plugin's own scanner — refreshing `antigravity.json` in the directory above. Providers you have not installed simply do not appear.
+By default it makes **no network requests**: everything it shows is read from the usage JSON Omarchy's own agent integrations already write to `~/.local/state/omarchy/agents/usage/`. To keep that fresh it may run Omarchy's local updater (`~/.config/omarchy/agents/update` or `/usr/share/omarchy/bin/omarchy-agent-usage-update`) and, when the Antigravity usage plugin is installed, that plugin's own scanner — refreshing `antigravity.json` in the directory above. Providers you have not installed simply do not appear.
+
+### Optional: OpenCode Go and Command Code subscription tracking
+
+Omarchy's own integrations do not cover these two subscriptions, so the collector can fetch them directly. This is **opt-in** — it only happens when an API key is present:
+
+- `OPENCODE_GO_API_KEY` (or `OPENCODE_ZEN_API_KEY`) — OpenCode Go rolling 5h / weekly / monthly windows.
+- `COMMANDCODE_API_KEY` — Command Code 5h / weekly windows plus the remaining USD credit balance (shown as the provider's tier label).
+
+Keys are read from the environment or from an optional `~/.config/omarchy/ai-limits.env` file (`KEY=VALUE` lines, `#` comments; parsed verbatim, never executed or interpolated). When set, the collector calls only the providers' own HTTPS endpoints (`https://opencode.ai/zen/go/v1/usage`, `https://api.commandcode.ai/alpha/billing/credits`) with short timeouts and a 4 KiB response cap; the `Authorization` header is never forwarded to any other origin, and a failed fetch keeps the last good data. If Omarchy's own OpenCode integration is already reporting (`opencode.json` present and ready), OpenCode Go tracking stays off so the provider never shows twice.
 
 ---
 
@@ -155,7 +166,9 @@ omarchy restart shell
 
 The plugin's settings live inside its own entry in `~/.config/omarchy/shell.json`, which disabling removes.
 
-The only file the collector writes outside that entry is a refreshed copy of Omarchy's own Antigravity usage cache, `~/.local/state/omarchy/agents/usage/antigravity.json`, and only when the [Antigravity usage plugin](https://github.com/jesseburlamaque/omarchy-antigravity-usage) is installed to produce it. That cache belongs to Omarchy's shared agent-usage state rather than to this plugin, so removal leaves it in place; delete it yourself if you want it gone.
+The only other file the collector writes outside that entry is a refreshed copy of Omarchy's own Antigravity usage cache, `~/.local/state/omarchy/agents/usage/antigravity.json`, and only when the [Antigravity usage plugin](https://github.com/jesseburlamaque/omarchy-antigravity-usage) is installed to produce it. That cache belongs to Omarchy's shared agent-usage state rather than to this plugin, so removal leaves it in place; delete it yourself if you want it gone.
+
+The collector also writes `opencode-go.json` and `commandcode.json` into that same shared directory — but only when the corresponding subscription tracking is configured as described above (an unconfigured provider gets a stub that offers setup help, which is removed by deleting the file). Like the Antigravity cache, these files belong to Omarchy's shared agent-usage state rather than to this plugin, so removal leaves them in place; delete them yourself if you want them gone.
 
 ---
 

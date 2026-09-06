@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "gladimdim.ai-limits",
   "name": "AI Usage Bar",
-  "version": "1.2.2",
+  "version": "1.3.0",
   "author": "Dmytro Gladkyi",
   "license": "MIT",
-  "description": "Claude Code, Grok, Codex and Antigravity usage, quota and rate limit tracking as old-school ASCII progress bars in your Omarchy dock.",
+  "description": "Claude Code, Grok, Codex, Antigravity, OpenCode Go, Command Code and more — usage, quota and rate limit tracking as old-school ASCII progress bars in your Omarchy dock.",
   "kinds": [
     "bar-widget"
   ],
@@ -14,7 +14,7 @@
   },
   "barWidget": {
     "displayName": "AI Usage Bar",
-    "description": "Track AI provider usage, quotas and rate limits as ASCII progress bars in the dock",
+    "description": "Track AI provider usage, quotas and rate limits (Claude, Grok, Codex, Antigravity, OpenCode Go, Command Code) as ASCII progress bars in the dock",
     "category": "AI",
     "allowMultiple": false,
     "defaultSection": "right",
