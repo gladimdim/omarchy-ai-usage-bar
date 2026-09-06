@@ -8,10 +8,16 @@ import argparse
 import datetime as dt
 import glob
 import json
+import math
 import os
 import re
+import ssl
 import subprocess
 import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -25,6 +31,8 @@ PROVIDER_COLORS = {
     "codex": "#10B981",
     "fireworks": "#F59E0B",
     "opencode": "#EC4899",
+    "opencode-go": "#EC4899",
+    "commandcode": "#F97316",
     "gemini": "#4285F4",
 }
 
@@ -35,6 +43,8 @@ PROVIDER_SHORT_NAMES = {
     "codex": "Codex",
     "fireworks": "Firewks",
     "opencode": "OpenCd",
+    "opencode-go": "OC Go",
+    "commandcode": "CmdCd",
     "gemini": "Gemini",
 }
 
@@ -183,6 +193,382 @@ def generate_ascii_bar(percent: float, length: int = 16, style: str = "blocks") 
         return "[" + ("█" * fill_count) + ("░" * empty_count) + "]"
 
 
+# --------------------------------------------------------------------------- #
+# Subscription providers (OpenCode Go, Command Code)
+#
+# Omarchy's own agent integrations do not cover these two, so nothing ever
+# writes their usage JSON into USAGE_DIR. These fetchers fill that gap the
+# same way ensure_antigravity_data() fills Antigravity's: produce the exact
+# file shape the collector below already parses, then let the normal
+# discovery loop render it. Standard library only; the endpoints are fixed
+# and the Authorization header is never forwarded off-origin.
+# --------------------------------------------------------------------------- #
+
+OPENCODE_USAGE_URL = "https://opencode.ai/zen/go/v1/usage"
+COMMANDCODE_CREDITS_URL = "https://api.commandcode.ai/alpha/billing/credits"
+
+SUBSCRIPTION_TIMEOUT_S = 6
+# urllib timeouts are per socket operation, so a slow-drip response can hold
+# the collector for roughly 2x SUBSCRIPTION_TIMEOUT_S. The chunked read below
+# enforces this total wall-clock deadline on top of the socket timeout.
+SUBSCRIPTION_TOTAL_DEADLINE_S = 12
+MAX_RESPONSE_BYTES = 4096
+SUBSCRIPTION_USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) omarchy-ai-usage-bar"
+SUBSCRIPTION_ENV_FILE = Path(os.path.expanduser("~/.config/omarchy/ai-limits.env"))
+SUBSCRIPTION_KEY_VARS = ("OPENCODE_GO_API_KEY", "OPENCODE_ZEN_API_KEY", "COMMANDCODE_API_KEY")
+
+_opencode_windows = (
+    ("rolling", "5h"),
+    ("weekly", "Weekly"),
+    ("monthly", "Monthly"),
+)
+
+
+class _SameOriginRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Follow redirects only within the same origin (scheme + host) so the
+    Authorization (API key) header is never forwarded elsewhere and never
+    downgraded to plaintext. Any other redirect raises HTTPError."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        new = urllib.parse.urlparse(newurl)
+        old = urllib.parse.urlparse(req.full_url)
+        if (new.scheme, new.netloc) != (old.scheme, old.netloc):
+            raise urllib.error.HTTPError(
+                req.full_url, code, "cross-origin redirect refused", headers, fp
+            )
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+_SUBSCRIPTION_OPENER = urllib.request.build_opener(
+    _SameOriginRedirectHandler(),
+    urllib.request.HTTPSHandler(context=ssl.create_default_context()),
+)
+
+
+def _load_subscription_env_file() -> None:
+    """Load KEY=VALUE pairs from SUBSCRIPTION_ENV_FILE into os.environ (once).
+
+    Only the keys this plugin understands are accepted; unknown lines are
+    ignored. Values are taken verbatim: an optional ``export`` prefix and
+    surrounding single/double quotes are stripped, and unquoted values get a
+    trailing ``# comment`` removed (dotenv convention: no bare ``#`` inside an
+    unquoted value). Nothing is interpolated or executed. If a key appears
+    more than once, the first occurrence wins (``setdefault``) — unlike shell
+    ``export`` semantics, but predictable and it lets real environment
+    variables always take precedence over the file.
+    """
+    path = SUBSCRIPTION_ENV_FILE
+    try:
+        if not path.is_file():
+            return
+        with open(path, "r", encoding="utf-8") as fh:
+            for raw_line in fh:
+                line = raw_line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                line = re.sub(r"^export\s+", "", line)
+                key, _, value = line.partition("=")
+                key = key.strip()
+                value = value.strip()
+                if key not in SUBSCRIPTION_KEY_VARS or not value:
+                    continue
+                if value and value[0] in "\"'":
+                    quote = value[0]
+                    end = value.find(quote, 1)
+                    if end != -1:
+                        value = value[1:end]
+                elif " #" in value:
+                    # Unquoted value: drop a trailing comment (KEY=x # note).
+                    value = value.split(" #", 1)[0].rstrip()
+                if not value:
+                    continue
+                os.environ.setdefault(key, value)
+    except Exception as exc:
+        print(f"ai-usage-bar: could not read {path}: {type(exc).__name__}", file=sys.stderr)
+
+
+def _read_subscription_key(env_names: tuple) -> Optional[str]:
+    for env_name in env_names:
+        value = os.environ.get(env_name, "").strip()
+        if value:
+            return value
+    return None
+
+
+def _subscription_request_json(url: str, api_key: str):
+    request = urllib.request.Request(
+        url,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Accept": "application/json",
+            "User-Agent": SUBSCRIPTION_USER_AGENT,
+        },
+    )
+    with _SUBSCRIPTION_OPENER.open(request, timeout=SUBSCRIPTION_TIMEOUT_S) as response:
+        # Chunked read: enforces the response-size cap exactly and adds a total
+        # wall-clock deadline (socket timeouts only bound single operations).
+        chunks: List[bytes] = []
+        total = 0
+        deadline = time.monotonic() + SUBSCRIPTION_TOTAL_DEADLINE_S
+        while True:
+            if time.monotonic() > deadline:
+                raise TimeoutError("response deadline exceeded")
+            chunk = response.read(1024)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > MAX_RESPONSE_BYTES:
+                raise ValueError("response-too-large")
+            chunks.append(chunk)
+        raw = b"".join(chunks)
+    return json.loads(raw.decode("utf-8", errors="replace"))
+
+
+def _finite(value: Any, default: float = 0.0) -> float:
+    """Reject NaN/inf so json.dumps never emits bare Infinity (invalid JSON)."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return default
+    return number if math.isfinite(number) else default
+
+
+def _subscription_transport_error(exc: Exception) -> str:
+    if isinstance(exc, urllib.error.HTTPError):
+        return f"HTTP {exc.code}"
+    if isinstance(exc, (urllib.error.URLError, TimeoutError, OSError)):
+        return "network error"
+    if isinstance(exc, (json.JSONDecodeError, UnicodeDecodeError, ValueError)):
+        return "unexpected response"
+    return "unknown error"
+
+
+def _clamp_text(value: Any, limit: int) -> str:
+    """Bound an API-sourced string before it reaches the widget.
+
+    The QML Text elements render whatever the collector emits, so mapped
+    values get a hard length cap instead of trusting the API to stay short.
+    """
+    text = str(value or "")
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def _fetch_opencode_go(api_key: str) -> Dict[str, Any]:
+    """OpenCode Go usage: rolling 5h / weekly / monthly percent windows."""
+    body = _subscription_request_json(OPENCODE_USAGE_URL, api_key)
+    raw_usage = body.get("usage") if isinstance(body, dict) else None
+    if not isinstance(raw_usage, dict):
+        raise ValueError("unexpected-response")
+
+    limits: List[Dict[str, Any]] = []
+    detail_parts: List[str] = []
+    for window_id, title in _opencode_windows:
+        window = raw_usage.get(window_id)
+        if not isinstance(window, dict) or window.get("percent") is None:
+            continue
+        percent = min(100.0, max(0.0, _finite(window["percent"])))
+        resets_at = window.get("resetsAt") if isinstance(window.get("resetsAt"), str) else ""
+        detail_parts.append(f"{title} {round(percent)}%")
+        limits.append({"title": _clamp_text(title, 60), "percent": percent / 100.0, "resetsAt": resets_at})
+    if not limits:
+        raise ValueError("unexpected-response")
+
+    return {
+        "tierLabel": _clamp_text("Subscription", 40),
+        "usageStatusText": _clamp_text(" · ".join(detail_parts), 160),
+        "limits": limits,
+    }
+
+
+def _fetch_command_code(api_key: str) -> Dict[str, Any]:
+    """Command Code: 5h/weekly percent windows plus a USD credit balance."""
+    body = _subscription_request_json(COMMANDCODE_CREDITS_URL, api_key)
+    if not isinstance(body, dict):
+        raise ValueError("unexpected-response")
+    credits = body.get("credits") if isinstance(body.get("credits"), dict) else None
+    window_limits = body.get("windowLimits") if isinstance(body.get("windowLimits"), dict) else None
+    if credits is None and window_limits is None:
+        raise ValueError("unexpected-response")
+
+    monthly_credits = _finite(credits.get("monthlyCredits")) if credits else 0.0
+    purchased = _finite(credits.get("purchasedCredits")) if credits else 0.0
+    free = _finite(credits.get("freeCredits")) if credits else 0.0
+    # _finite on the sum too: two large-but-finite components can still add
+    # up to inf, which would serialize as bare Infinity.
+    total_remaining = max(0.0, _finite(monthly_credits + purchased + free))
+
+    limits = []
+    detail_parts: List[str] = []
+    for raw_key, title in (("fiveHour", "5h"), ("weekly", "Weekly")):
+        window = window_limits.get(raw_key) if isinstance(window_limits, dict) else None
+        if not isinstance(window, dict):
+            continue
+        cap = _finite(window.get("cap"))
+        used = _finite(window.get("used"))
+        if cap <= 0:
+            continue
+        percent = round(min(100.0, max(0.0, used / cap * 100.0)), 1)
+        # resetAt is epoch ms — convert to the ISO instant the collector expects.
+        # Accept numeric strings too; the API has sent both shapes.
+        reset_ms = window.get("resetAt")
+        if isinstance(reset_ms, str):
+            try:
+                reset_ms = float(reset_ms)
+            except ValueError:
+                reset_ms = None
+        reset_iso = ""
+        if isinstance(reset_ms, (int, float)) and reset_ms > 0:
+            try:
+                reset_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(reset_ms / 1000.0))
+            except (ValueError, OverflowError, OSError):
+                reset_iso = ""
+        detail_parts.append(f"{title} {round(percent)}%")
+        limits.append({"title": _clamp_text(title, 60), "percent": percent / 100.0, "resetsAt": reset_iso})
+    if not limits:
+        raise ValueError("unexpected-response")
+
+    if total_remaining > 0:
+        detail_parts.append(f"${total_remaining:,.2f} remaining")
+    return {
+        "tierLabel": _clamp_text(f"${total_remaining:,.2f} left" if total_remaining > 0 else "Subscription", 40),
+        "usageStatusText": _clamp_text(" · ".join(detail_parts), 160),
+        "limits": limits,
+    }
+
+
+def _write_usage_file(name: str, payload: Dict[str, Any]) -> None:
+    USAGE_DIR.mkdir(parents=True, exist_ok=True)
+    dest = USAGE_DIR / f"{name}.json"
+    # Pid-suffixed tmp name: the QML timer can overlap collector runs, and a
+    # shared fixed tmp file could otherwise interleave two writers. A unique
+    # tmp per process makes every os.replace atomic and race-free.
+    tmp_dest = USAGE_DIR / f".{name}.{os.getpid()}.json.tmp"
+    with open(tmp_dest, "w", encoding="utf-8") as fh:
+        json.dump(payload, fh, indent=2)
+        # Flush to disk before the atomic swap so a crash can never leave a
+        # truncated destination file behind.
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(tmp_dest, dest)
+
+
+def _write_subscription_stub(name: str, display_name: str, auth_help: str) -> None:
+    """Write a ready:false file so the UI offers setup help for this provider."""
+    _write_usage_file(
+        name,
+        {
+            "id": name,
+            "name": display_name,
+            "ready": False,
+            "hasLocalStats": False,
+            "usageStatusText": f"{display_name} not configured",
+            "authHelpText": auth_help,
+            "limits": [],
+            "updatedAt": dt.datetime.now(dt.timezone.utc).isoformat(),
+        },
+    )
+
+
+def ensure_subscription_data() -> None:
+    """Fetch OpenCode Go / Command Code usage into USAGE_DIR.
+
+    Runs on every collector pass. Missing keys produce a ready:false stub so
+    the widget can show setup help (same as Omarchy's own providers); fetch
+    errors keep the last good file so a flaky network never blanks the bars.
+    If Omarchy's own OpenCode integration is active (opencode.json ready),
+    OpenCode Go tracking is skipped to avoid showing the provider twice.
+    """
+    _load_subscription_env_file()
+
+    oc_key = _read_subscription_key(("OPENCODE_GO_API_KEY", "OPENCODE_ZEN_API_KEY"))
+    cc_key = _read_subscription_key(("COMMANDCODE_API_KEY",))
+
+    omarchy_tracked = False
+    omarchy_opencode_path = USAGE_DIR / "opencode.json"
+    if omarchy_opencode_path.exists():
+        try:
+            with open(omarchy_opencode_path, "r", encoding="utf-8") as fh:
+                if json.load(fh).get("ready"):
+                    omarchy_tracked = True
+                    if oc_key:
+                        # Omarchy's integration already reports OpenCode
+                        # usage; skip the live fetch so the provider never
+                        # shows twice under two ids.
+                        oc_key = None
+        except Exception as exc:
+            print(
+                f"ai-usage-bar: could not read {omarchy_opencode_path} ({type(exc).__name__}); OpenCode Go may duplicate Omarchy's OpenCode entry",
+                file=sys.stderr,
+            )
+
+    def _ensure_loop() -> None:
+        for name, display_name, api_key, fetch, key_names in (
+            (
+                "opencode-go",
+                "OpenCode Go",
+                oc_key,
+                _fetch_opencode_go,
+                "OPENCODE_GO_API_KEY (or OPENCODE_ZEN_API_KEY)",
+            ),
+            ("commandcode", "Command Code", cc_key, _fetch_command_code, "COMMANDCODE_API_KEY"),
+        ):
+            # The whole block — stub writes included — sits inside the try so a
+            # failure to write (unwritable dir, disk full) degrades to a stderr
+            # line instead of killing the collector and blanking every provider.
+            try:
+                if not api_key:
+                    if name == "opencode-go" and omarchy_tracked:
+                        # No Go key, but Omarchy's own OpenCode integration is
+                        # active: point the card at that instead of setup help.
+                        _write_usage_file(
+                            "opencode-go",
+                            {
+                                "id": "opencode-go",
+                                "name": "OpenCode Go",
+                                "ready": True,
+                                "hasLocalStats": False,
+                                "usageStatusText": "Tracked by Omarchy's OpenCode integration",
+                                "limits": [],
+                            },
+                        )
+                    else:
+                        # Unconfigured (or the key was just removed): write the
+                        # ready:false stub the docstring promises, replacing any
+                        # stale marker or outdated quota data.
+                        _write_subscription_stub(
+                            name, display_name, f"Set {key_names} in your environment or ~/.config/omarchy/ai-limits.env."
+                        )
+                    continue
+                result = fetch(api_key)
+                _write_usage_file(
+                    name,
+                    {
+                        "id": name,
+                        "name": display_name,
+                        "ready": True,
+                        "hasLocalStats": False,
+                        "tierLabel": result["tierLabel"],
+                        "usageStatusText": result["usageStatusText"],
+                        "limits": result["limits"],
+                        "updatedAt": dt.datetime.now(dt.timezone.utc).isoformat(),
+                    },
+                )
+            except Exception as exc:
+                kept = (USAGE_DIR / f"{name}.json").exists()
+                suffix = "; keeping last good data" if kept else "; provider stays unconfigured"
+                print(
+                    f"ai-usage-bar: {display_name} usage refresh failed ({_subscription_transport_error(exc)}){suffix}",
+                    file=sys.stderr,
+                )
+
+    try:
+        _ensure_loop()
+    except Exception as exc:
+        # Belt and braces: nothing above should raise, but the collector must
+        # never die here — the usage directory may hold other providers' data.
+        print(f"ai-usage-bar: subscription refresh aborted ({type(exc).__name__})", file=sys.stderr)
+
+
 def ensure_antigravity_data() -> None:
     """Run antigravity scanner if available to make sure antigravity.json is present and fresh."""
     scanner_paths = [
@@ -226,6 +612,7 @@ def refresh_omarchy_agents() -> None:
 
 
 def collect_all_data() -> Dict[str, Any]:
+    ensure_subscription_data()
     ensure_antigravity_data()
 
     providers: List[Dict[str, Any]] = []
