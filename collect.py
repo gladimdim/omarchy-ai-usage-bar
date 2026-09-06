@@ -207,7 +207,7 @@ def generate_ascii_bar(percent: float, length: int = 16, style: str = "blocks") 
 OPENCODE_USAGE_URL = "https://opencode.ai/zen/go/v1/usage"
 COMMANDCODE_CREDITS_URL = "https://api.commandcode.ai/alpha/billing/credits"
 
-SUBSCRIPTION_TIMEOUT_S = 8
+SUBSCRIPTION_TIMEOUT_S = 6
 MAX_RESPONSE_BYTES = 4096
 SUBSCRIPTION_USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) omarchy-ai-usage-bar"
 SUBSCRIPTION_ENV_FILE = Path(os.path.expanduser("~/.config/omarchy/ai-limits.env"))
@@ -317,6 +317,16 @@ def _subscription_transport_error(exc: Exception) -> str:
     return "unknown error"
 
 
+def _clamp_text(value: Any, limit: int) -> str:
+    """Bound an API-sourced string before it reaches the widget.
+
+    The QML Text elements render whatever the collector emits, so mapped
+    values get a hard length cap instead of trusting the API to stay short.
+    """
+    text = str(value or "")
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
 def _fetch_opencode_go(api_key: str) -> Dict[str, Any]:
     """OpenCode Go usage: rolling 5h / weekly / monthly percent windows."""
     body = _subscription_request_json(OPENCODE_USAGE_URL, api_key)
@@ -336,13 +346,13 @@ def _fetch_opencode_go(api_key: str) -> Dict[str, Any]:
         if headline is None:
             headline = percent
         detail_parts.append(f"{title} {round(percent)}%")
-        limits.append({"title": title, "percent": percent / 100.0, "resetsAt": resets_at})
+        limits.append({"title": _clamp_text(title, 60), "percent": percent / 100.0, "resetsAt": resets_at})
     if not limits:
         raise ValueError("unexpected-response")
 
     return {
-        "tierLabel": "Subscription",
-        "usageStatusText": " · ".join(detail_parts),
+        "tierLabel": _clamp_text("Subscription", 40),
+        "usageStatusText": _clamp_text(" · ".join(detail_parts), 160),
         "limits": limits,
         "headline_percent": headline,
     }
@@ -388,15 +398,15 @@ def _fetch_command_code(api_key: str) -> Dict[str, Any]:
         if headline is None:
             headline = percent
         detail_parts.append(f"{title} {round(percent)}%")
-        limits.append({"title": title, "percent": percent / 100.0, "resetsAt": reset_iso})
+        limits.append({"title": _clamp_text(title, 60), "percent": percent / 100.0, "resetsAt": reset_iso})
     if not limits:
         raise ValueError("unexpected-response")
 
     if total_remaining > 0:
         detail_parts.append(f"${total_remaining:,.2f} remaining")
     return {
-        "tierLabel": f"${total_remaining:,.2f} left" if total_remaining > 0 else "Subscription",
-        "usageStatusText": " · ".join(detail_parts),
+        "tierLabel": _clamp_text(f"${total_remaining:,.2f} left" if total_remaining > 0 else "Subscription", 40),
+        "usageStatusText": _clamp_text(" · ".join(detail_parts), 160),
         "limits": limits,
         "headline_percent": headline,
     }
@@ -405,7 +415,10 @@ def _fetch_command_code(api_key: str) -> Dict[str, Any]:
 def _write_usage_file(name: str, payload: Dict[str, Any]) -> None:
     USAGE_DIR.mkdir(parents=True, exist_ok=True)
     dest = USAGE_DIR / f"{name}.json"
-    tmp_dest = USAGE_DIR / f".{name}.json.tmp"
+    # Pid-suffixed tmp name: the QML timer can overlap collector runs, and a
+    # shared fixed tmp file could otherwise interleave two writers. A unique
+    # tmp per process makes every os.replace atomic and race-free.
+    tmp_dest = USAGE_DIR / f".{name}.{os.getpid()}.json.tmp"
     with open(tmp_dest, "w", encoding="utf-8") as fh:
         json.dump(payload, fh, indent=2)
     os.replace(tmp_dest, dest)
