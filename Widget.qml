@@ -49,22 +49,29 @@ BarWidget {
     return fallback ? fallback.slice() : []
   }
 
-  // Settings from shell.json (Strictly capped at max 2, directly reactive to root.settings)
+  Preferences {
+    id: preferences
+    legacySettings: root.settings || ({})
+  }
+
+  readonly property var effectiveSettings: preferences.effectiveSettings
+
+  // Saved preferences take precedence over a stale or rebuilt shell entry.
   readonly property var trackedSettings: {
-    var raw = root.settings && root.settings.tracked !== undefined
-      ? root.settings.tracked
+    var raw = root.effectiveSettings.tracked !== undefined
+      ? root.effectiveSettings.tracked
       : ["claude:session-5-hour", "grok:weekly"]
     return root.toList(raw, ["claude:session-5-hour", "grok:weekly"]).slice(0, 2)
   }
   readonly property int trackedCount: root.toList(trackedSettings, []).length
   property string selectionWarning: ""
-  readonly property int barLength: Math.max(8, Math.min(32, Number(root.settings && root.settings.barLength !== undefined ? root.settings.barLength : 16)))
-  readonly property string barStyle: String(root.settings && root.settings.barStyle !== undefined ? root.settings.barStyle : "blocks")
-  readonly property bool showPercent: Boolean(root.settings && root.settings.showPercent !== undefined ? root.settings.showPercent : true)
-  readonly property bool showReset: Boolean(root.settings && root.settings.showReset !== undefined ? root.settings.showReset : true)
-  readonly property bool showLabel: Boolean(root.settings && root.settings.showLabel !== undefined ? root.settings.showLabel : true)
-  readonly property bool coloredBars: Boolean(root.settings && root.settings.coloredBars !== undefined ? root.settings.coloredBars : true)
-  readonly property int refreshIntervalSec: Math.max(10, Number(root.settings && root.settings.refreshIntervalSec !== undefined ? root.settings.refreshIntervalSec : 60))
+  readonly property int barLength: Math.max(8, Math.min(32, Number(root.effectiveSettings && root.effectiveSettings.barLength !== undefined ? root.effectiveSettings.barLength : 16)))
+  readonly property string barStyle: String(root.effectiveSettings && root.effectiveSettings.barStyle !== undefined ? root.effectiveSettings.barStyle : "blocks")
+  readonly property bool showPercent: Boolean(root.effectiveSettings && root.effectiveSettings.showPercent !== undefined ? root.effectiveSettings.showPercent : true)
+  readonly property bool showReset: Boolean(root.effectiveSettings && root.effectiveSettings.showReset !== undefined ? root.effectiveSettings.showReset : true)
+  readonly property bool showLabel: Boolean(root.effectiveSettings && root.effectiveSettings.showLabel !== undefined ? root.effectiveSettings.showLabel : true)
+  readonly property bool coloredBars: Boolean(root.effectiveSettings && root.effectiveSettings.coloredBars !== undefined ? root.effectiveSettings.coloredBars : true)
+  readonly property int refreshIntervalSec: Math.max(10, Number(root.effectiveSettings && root.effectiveSettings.refreshIntervalSec !== undefined ? root.effectiveSettings.refreshIntervalSec : 60))
 
   // The order the user arranged the limits into, as limit ids. Only a provider
   // whose rows have been nudged appears here; everything unlisted keeps the
@@ -72,7 +79,7 @@ BarWidget {
   // Position within a provider is what matters — the first of its ids is that
   // provider's headline limit, the one the folded panel header reports.
   readonly property var limitOrderSettings: root.toList(
-    root.settings && root.settings.limitOrder !== undefined ? root.settings.limitOrder : [],
+    root.effectiveSettings && root.effectiveSettings.limitOrder !== undefined ? root.effectiveSettings.limitOrder : [],
     [])
 
   // Data state
@@ -113,8 +120,9 @@ BarWidget {
       }
     }
 
-    // Fallback: pick top 2 if none matched or empty
-    if (result.length === 0 && limits.length > 0) {
+    // Auto-pick only before a user has configured a selection. Missing data
+    // and an explicitly empty selection must never display unrelated limits.
+    if (root.effectiveSettings.tracked === undefined && result.length === 0 && limits.length > 0) {
       for (var k = 0; k < limits.length; k++) {
         result.push(limits[k])
         if (result.length >= 2) break
@@ -190,18 +198,18 @@ BarWidget {
     return groups
   }
 
-  // providerId -> true when the panel is folded shut. Replaced wholesale on each
-  // change so bindings that read it re-evaluate.
+  // Providers start folded, including those discovered after the first refresh.
+  // Store explicit overrides and replace the map so bindings re-evaluate.
   property var collapsedProviders: ({})
 
   function isProviderCollapsed(providerId) {
-    return root.collapsedProviders[providerId] === true
+    return root.collapsedProviders[providerId] !== false
   }
 
   function toggleProviderCollapsed(providerId) {
     var next = ({})
     for (var k in root.collapsedProviders) next[k] = root.collapsedProviders[k]
-    next[providerId] = !(next[providerId] === true)
+    next[providerId] = !root.isProviderCollapsed(providerId)
     root.collapsedProviders = next
   }
 
@@ -225,16 +233,14 @@ BarWidget {
 
   function anyProviderCollapsed() {
     var ids = root.allProviderIds()
-    for (var i = 0; i < ids.length; i++) if (root.collapsedProviders[ids[i]] === true) return true
+    for (var i = 0; i < ids.length; i++) if (root.isProviderCollapsed(ids[i])) return true
     return false
   }
 
   function setAllProvidersCollapsed(collapsed) {
     var next = ({})
-    if (collapsed) {
-      var ids = root.allProviderIds()
-      for (var i = 0; i < ids.length; i++) next[ids[i]] = true
-    }
+    var ids = root.allProviderIds()
+    for (var i = 0; i < ids.length; i++) next[ids[i]] = collapsed
     root.collapsedProviders = next
   }
 
@@ -363,8 +369,13 @@ BarWidget {
   }
 
   function saveSetting(key, value) {
+    // Persist before the shell callback: it may synchronously recreate widgets.
+    if (!preferences.save(key, value)) {
+      root.selectionWarning = preferences.error
+      return
+    }
     var entry = { id: root.moduleName }
-    for (var k in root.settings) if (k !== "id") entry[k] = root.settings[k]
+    for (var k in root.effectiveSettings) if (k !== "id") entry[k] = root.effectiveSettings[k]
     entry[key] = value
     root.settings = entry
 
@@ -2550,6 +2561,9 @@ BarWidget {
         scriptPath: root.scriptPath,
         procRunning: collectorProc.running,
         settings: root.settings,
+        effectiveSettings: root.effectiveSettings,
+        preferencesPath: preferences.path,
+        preferencesError: preferences.error,
         trackedSettings: root.trackedSettings,
         trackedCount: root.trackedItems.length,
         limitsCount: root.allLimits ? root.allLimits.length : -1,

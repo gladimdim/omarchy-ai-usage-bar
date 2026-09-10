@@ -35,7 +35,7 @@ An old-school ASCII progress bar widget for the [Omarchy](https://github.com/oma
 - **🎛️ Interactive Popup Dashboard**:
   - **Live Dock Preview**: Test and view your dock layout in real-time.
   - **Limit Selector**: Easily toggle and select which 2 limits appear in the dock.
-  - **Collapsible Provider Panels**: Every limit is grouped under its provider. Click a provider header (or press `e` to fold/unfold them all) to collapse the group down to a single row showing its headline limit and how many of its limits are pinned to the dock.
+  - **Collapsible Provider Panels**: Every limit is grouped under its provider. All provider panels start collapsed on both tabs, showing their headline limit and how many limits are pinned to the dock. Click a provider header to expand it, or press `e` to expand/collapse them all.
   - **Arrange Each Panel**: Nudge a limit up or down with the `▲` / `▼` buttons on its row. The order is yours and is remembered (`limitOrder`), and the row you put **first becomes the provider's headline limit** — the one its header reports when the panel is folded, on both tabs. A marker down the left edge shows which row that is. Limits you never move stay in the collector's own order (busiest first), below the ones you arranged.
   - **All Providers Overview**: Detailed status cards with tokens, sessions, reset times, and raw allowance numbers — also grouped into collapsible panels.
   - **Style Customizer**: Interactive buttons to change bar styles, bar length (8 to 32 characters), and toggle labels, percentages, and reset countdowns.
@@ -99,7 +99,9 @@ omarchy plugin enable gladimdim.ai-limits --section right
 
 ### Optional: configure by hand
 
-Everything is configurable from the popup dashboard, but you can also edit the widget's entry in `~/.config/omarchy/shell.json` directly:
+Everything is configurable from the popup dashboard. Preferences are saved immediately to `~/.config/omarchy/ai-usage-bar.json` (or `$XDG_CONFIG_HOME/omarchy/ai-usage-bar.json`) and survive shell restarts, plugin rebuilds, and replacement of `shell.json`. This JSON object uses the settings listed below and can also be edited directly; changes reload automatically.
+
+Existing inline settings are imported automatically for keys not yet saved in that file. The widget still mirrors popup changes to its entry in `~/.config/omarchy/shell.json` when the shell API is available, but saved preferences take precedence over that entry. For an initial installation you can seed settings there:
 
 ```json
 {
@@ -121,7 +123,9 @@ Everything is configurable from the popup dashboard, but you can also edit the w
 }
 ```
 
-If you ever need to reload the shell, use `omarchy restart shell`, **not** `omarchy refresh shell` — the latter resets `~/.config/omarchy/shell.json` to Omarchy defaults and discards your bar layout and plugin settings.
+If you ever need to reload the shell, use `omarchy restart shell`, **not** `omarchy refresh shell` — the latter resets `~/.config/omarchy/shell.json` to Omarchy defaults and discards your bar layout. AI Usage Bar's separate preferences survive that reset and are restored when the widget is enabled again.
+
+Selected limits that temporarily disappear from provider data are omitted until they return; the widget does not substitute other providers. Clearing both selections leaves the dock unselected.
 
 ---
 
@@ -132,8 +136,6 @@ omarchy plugin update gladimdim.ai-limits
 ```
 
 It fetches upstream, shows you the diff, fast-forwards the installed copy, and re-validates the manifest — rolling the update back if validation fails. Add `--yes` to skip the diff and the confirmation. Running `omarchy plugin update` with no id updates every git-managed plugin you have.
-
-After tagging a new release, re-verify the marketplace listing for the exact new commit. See [AGENTS.md](AGENTS.md).
 
 ---
 
@@ -153,15 +155,15 @@ rm -rf ~/.config/omarchy/plugins/gladimdim.ai-limits
 omarchy restart shell
 ```
 
-The plugin's settings live inside its own entry in `~/.config/omarchy/shell.json`, which disabling removes.
+Disabling removes the plugin's entry from `~/.config/omarchy/shell.json`. Saved preferences in `~/.config/omarchy/ai-usage-bar.json` remain for reinstallation; remove that file too if you want a complete reset (use the corresponding `$XDG_CONFIG_HOME` path if set).
 
-The only file the collector writes outside that entry is a refreshed copy of Omarchy's own Antigravity usage cache, `~/.local/state/omarchy/agents/usage/antigravity.json`, and only when the [Antigravity usage plugin](https://github.com/jesseburlamaque/omarchy-antigravity-usage) is installed to produce it. That cache belongs to Omarchy's shared agent-usage state rather than to this plugin, so removal leaves it in place; delete it yourself if you want it gone.
+The collector also writes a refreshed copy of Omarchy's own Antigravity usage cache, `~/.local/state/omarchy/agents/usage/antigravity.json`, and only when the [Antigravity usage plugin](https://github.com/jesseburlamaque/omarchy-antigravity-usage) is installed to produce it. That cache belongs to Omarchy's shared agent-usage state rather than to this plugin, so removal leaves it in place; delete it yourself if you want it gone.
 
 ---
 
 ## ⚙️ Configuration Reference
 
-All settings can be tweaked directly in `~/.config/omarchy/shell.json` or via the interactive popup dashboard:
+All settings can be tweaked in `~/.config/omarchy/ai-usage-bar.json` or via the interactive popup dashboard. Existing `shell.json` settings are imported automatically:
 
 | Setting | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
@@ -205,6 +207,17 @@ omarchy-shell gladimdim.ai-limits debugInfo
 ```
 
 ---
+
+## Development checks
+
+With Python 3, Quickshell, and Node.js installed:
+
+```bash
+python3 -B -m unittest discover -s tests -v
+node tests/selection.test.cjs
+```
+
+Persistence checks run headlessly in temporary directories, including a fresh process restart, plugin recreation, and multiple widget instances. They do not change desktop settings.
 
 ## 👤 Author
 
