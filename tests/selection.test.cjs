@@ -12,10 +12,11 @@ function functionSource(name) {
   assert.ok(start >= 0 && end > start);
   return qml.slice(start, end);
 }
-function widget(selection) {
+function widget(selection, maxTracked = 2) {
   const context = vm.createContext({
     effectiveSettings: selection === undefined ? {} : { tracked: selection },
     trackedSettings: selection ?? ['claude:session-5-hour', 'grok:weekly'],
+    maxTracked,
     trackedItems: [],
     limitsData: { allLimits: [] },
   });
@@ -50,4 +51,13 @@ test('first-run automatic selection still works', () => {
 
 test('a saved selection never displays more than two limits', () => {
   assert.deepEqual(widget(['a', 'b', 'c']).refresh(['c', 'b', 'a']), ['a', 'b']);
+});
+
+test('a larger dock layout displays up to its capacity', () => {
+  const selected = ['a', 'b', 'c', 'd', 'e', 'f', 'g'];
+  assert.deepEqual(widget(selected, 6).refresh([...selected].reverse()), selected.slice(0, 6));
+});
+
+test('first-run automatic selection fills a larger layout', () => {
+  assert.deepEqual(widget(undefined, 3).refresh(['a', 'b', 'c', 'd']), ['a', 'b', 'c']);
 });

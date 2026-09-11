@@ -13,7 +13,8 @@ QtObject {
   property bool initialized: false
   property string error: ""
   readonly property var keys: ["tracked", "limitOrder", "barLength", "barStyle",
-    "showPercent", "showReset", "showLabel", "coloredBars", "refreshIntervalSec"]
+    "showPercent", "showReset", "showLabel", "coloredBars", "refreshIntervalSec",
+    "barsPerColumn", "columns"]
   readonly property var values: readValues()
   readonly property var effectiveSettings: {
     var result = ({})

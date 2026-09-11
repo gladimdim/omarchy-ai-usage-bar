@@ -19,7 +19,7 @@ An old-school ASCII progress bar widget for the [Omarchy](https://github.com/oma
 ## ✨ Features
 
 - **📺 Old-School ASCII Progress Bars**: Displays authentic terminal-style progress bars right in your Omarchy bottom dock.
-- **⚡ Dual-Limit Tracking**: Track up to **2** different AI limits or providers simultaneously in a compact, two-line stacked HUD layout.
+- **⚡ Multi-Limit Tracking**: Track several AI limits at once in a compact grid of stacked HUD lines. Choose how many bars stack in each column (1–3) and how many columns sit side by side (1–4) — up to **12** limits. The default is one column of two bars.
 - **🔍 Auto-Discovery**: Automatically discovers and parses quota and rate-limit data from any installed Omarchy AI provider:
   - **Claude Code**: 5-hour session window, weekly 7-day quota, Fable weekly limits.
   - **Grok**: Weekly allowance, Grok Build, Grok Chat, Grok Tasks.
@@ -34,11 +34,11 @@ An old-school ASCII progress bar widget for the [Omarchy](https://github.com/oma
   - `braille`: `[⣿⣿⣿⣿⣿⣿⣀⣀⣀⣀⣀⣀]` (High-density braille)
 - **🎛️ Interactive Popup Dashboard**:
   - **Live Dock Preview**: Test and view your dock layout in real-time.
-  - **Limit Selector**: Easily toggle and select which 2 limits appear in the dock.
+  - **Limit Selector**: Easily toggle and select which limits appear in the dock, up to what your dock layout holds. Picking one more than that replaces the oldest selection.
   - **Collapsible Provider Panels**: Every limit is grouped under its provider. All provider panels start collapsed on both tabs, showing their headline limit and how many limits are pinned to the dock. Click a provider header to expand it, or press `e` to expand/collapse them all.
   - **Arrange Each Panel**: Nudge a limit up or down with the `▲` / `▼` buttons on its row. The order is yours and is remembered (`limitOrder`), and the row you put **first becomes the provider's headline limit** — the one its header reports when the panel is folded, on both tabs. A marker down the left edge shows which row that is. Limits you never move stay in the collector's own order (busiest first), below the ones you arranged.
   - **All Providers Overview**: Detailed status cards with tokens, sessions, reset times, and raw allowance numbers — also grouped into collapsible panels.
-  - **Style Customizer**: Interactive buttons to change bar styles, bar length (8 to 32 characters), and toggle labels, percentages, and reset countdowns.
+  - **Style Customizer**: Interactive buttons to change bar styles, the dock layout (bars per column × columns), bar length (8 to 32 characters), and toggle labels, percentages, and reset countdowns.
 - **📣 Depleted / Reset Announcements**:
   - When a limit hits 100%, a scrolling `<marquee>`-style banner announces it with a randomly picked quip (*"Ooops, tokens for Claude Code Session (5-hour) depleted!"*) over a pulsing red background.
   - When a limit rolls over into a fresh window, the same banner celebrates it with a sliding rainbow.
@@ -125,7 +125,7 @@ Existing inline settings are imported automatically for keys not yet saved in th
 
 If you ever need to reload the shell, use `omarchy restart shell`, **not** `omarchy refresh shell` — the latter resets `~/.config/omarchy/shell.json` to Omarchy defaults and discards your bar layout. AI Usage Bar's separate preferences survive that reset and are restored when the widget is enabled again.
 
-Selected limits that temporarily disappear from provider data are omitted until they return; the widget does not substitute other providers. Clearing both selections leaves the dock unselected.
+Selected limits that temporarily disappear from provider data are omitted until they return; the widget does not substitute other providers. Clearing every selection leaves the dock unselected. Shrinking the dock layout shows only the first selections that still fit.
 
 ---
 
@@ -167,7 +167,9 @@ All settings can be tweaked in `~/.config/omarchy/ai-usage-bar.json` or via the 
 
 | Setting | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
-| `tracked` | `array` | `["claude:session-5-hour", "grok:weekly"]` | Array of limit IDs to display in dock (up to 2). |
+| `tracked` | `array` | `["claude:session-5-hour", "grok:weekly"]` | Array of limit IDs to display in dock (up to `barsPerColumn` × `columns`). |
+| `barsPerColumn` | `integer` | `2` | Bars stacked in each dock column (1–3). Rows shrink to fit the bar height. |
+| `columns` | `integer` | `1` | Dock columns placed side by side (1–4). Limits fill each column top to bottom before starting the next. |
 | `limitOrder` | `array` | `[]` | Limit IDs in the order you arranged them inside their provider panel. Only the providers you rearranged appear; unlisted limits keep the collector's order below them. A provider's **first** ID here is its headline limit. |
 | `barStyle` | `string` | `"blocks"` | ASCII style: `blocks`, `shaded`, `ascii`, `retro`, `squares`, `braille`. |
 | `barLength` | `integer` | `16` | Length of progress bar body in characters (8–32). |
