@@ -56,12 +56,19 @@ BarWidget {
 
   readonly property var effectiveSettings: preferences.effectiveSettings
 
+  // Dock layout: pinned limits stack top-to-bottom into columns of
+  // `barsPerColumn` rows, and up to `columns` of those sit side by side.
+  // Their product is how many limits can be pinned at once.
+  readonly property int barsPerColumn: Math.max(1, Math.min(3, Math.round(Number(root.effectiveSettings && root.effectiveSettings.barsPerColumn !== undefined ? root.effectiveSettings.barsPerColumn : 2)) || 2))
+  readonly property int columns: Math.max(1, Math.min(4, Math.round(Number(root.effectiveSettings && root.effectiveSettings.columns !== undefined ? root.effectiveSettings.columns : 1)) || 1))
+  readonly property int maxTracked: root.barsPerColumn * root.columns
+
   // Saved preferences take precedence over a stale or rebuilt shell entry.
   readonly property var trackedSettings: {
     var raw = root.effectiveSettings.tracked !== undefined
       ? root.effectiveSettings.tracked
       : ["claude:session-5-hour", "grok:weekly"]
-    return root.toList(raw, ["claude:session-5-hour", "grok:weekly"]).slice(0, 2)
+    return root.toList(raw, ["claude:session-5-hour", "grok:weekly"]).slice(0, root.maxTracked)
   }
   readonly property int trackedCount: root.toList(trackedSettings, []).length
   property string selectionWarning: ""
@@ -102,7 +109,8 @@ BarWidget {
 
   function updateTrackedItems() {
     var result = []
-    var trackedList = root.toList(trackedSettings, []).slice(0, 2)
+    var max = root.maxTracked
+    var trackedList = root.toList(trackedSettings, []).slice(0, max)
     var limits = limitsData && limitsData.allLimits ? limitsData.allLimits : []
     var byId = {}
 
@@ -116,7 +124,7 @@ BarWidget {
       var tid = trackedList[j]
       if (byId[tid]) {
         result.push(byId[tid])
-        if (result.length >= 2) break
+        if (result.length >= max) break
       }
     }
 
@@ -125,11 +133,11 @@ BarWidget {
     if (root.effectiveSettings.tracked === undefined && result.length === 0 && limits.length > 0) {
       for (var k = 0; k < limits.length; k++) {
         result.push(limits[k])
-        if (result.length >= 2) break
+        if (result.length >= max) break
       }
     }
 
-    trackedItems = result.slice(0, 2)
+    trackedItems = result.slice(0, max)
   }
 
   onLimitsDataChanged: updateTrackedItems()
@@ -347,17 +355,18 @@ BarWidget {
   }
 
   function toggleTrackLimit(limitId) {
-    var trackedList = root.toList(root.trackedSettings, []).slice(0, 2)
+    var max = root.maxTracked
+    var trackedList = root.toList(root.trackedSettings, []).slice(0, max)
     var idx = trackedList.indexOf(limitId)
 
     if (idx !== -1) {
       trackedList.splice(idx, 1)
       root.selectionWarning = ""
     } else {
-      if (trackedList.length >= 2) {
+      if (trackedList.length >= max) {
         trackedList.shift()
         trackedList.push(limitId)
-        root.selectionWarning = "Max 2 tracked: replaced oldest selection."
+        root.selectionWarning = "Max " + max + " tracked: replaced oldest selection."
         warningTimer.restart()
       } else {
         trackedList.push(limitId)
@@ -365,7 +374,7 @@ BarWidget {
       }
     }
 
-    saveSetting("tracked", trackedList.slice(0, 2))
+    saveSetting("tracked", trackedList.slice(0, max))
   }
 
   function saveSetting(key, value) {
@@ -530,6 +539,13 @@ BarWidget {
   implicitWidth: dockItem.implicitWidth
   implicitHeight: root.barSize
 
+  // Grid rows share the bar's height, so more rows per column means shorter
+  // lines and smaller glyphs. A single row keeps the roomier one-line size.
+  readonly property int dockLineHeight: root.barsPerColumn === 1
+    ? 14
+    : Math.max(8, Math.min(11, Math.floor((root.barSize - 2) / root.barsPerColumn)))
+  readonly property int dockFontPx: Math.max(7, Math.min(10, root.dockLineHeight - 2))
+
   Item {
     id: dockItem
     anchors.fill: parent
@@ -668,21 +684,25 @@ BarWidget {
         }
       }
 
-      // 2 Lines Stacked Mode (When 2 providers are tracked)
-      Column {
+      // Grid Mode (2+ limits tracked): `barsPerColumn` rows stacked top to
+      // bottom, overflowing into further columns side by side.
+      Grid {
         id: multiColumn
         visible: root.trackedItems.length >= 2
         anchors.centerIn: parent
-        spacing: 0
+        flow: Grid.TopToBottom
+        rows: root.barsPerColumn
+        rowSpacing: 0
+        columnSpacing: 10
 
         Repeater {
-          model: root.trackedItems.slice(0, 2)
+          model: root.trackedItems
 
           Item {
             id: lineItem
             required property var modelData
             implicitWidth: lineRow.implicitWidth
-            implicitHeight: 11
+            implicitHeight: root.dockLineHeight
 
             Row {
               id: lineRow
@@ -693,7 +713,7 @@ BarWidget {
               Item {
                 visible: root.showLabel
                 width: 68
-                height: 11
+                height: root.dockLineHeight
                 anchors.verticalCenter: parent.verticalCenter
                 Text {
                   anchors.left: parent.left
@@ -701,7 +721,7 @@ BarWidget {
                   text: modelData.shortLabel
                   color: root.dockLabelColor(modelData)
                   font.family: root.fontFamily
-                  font.pixelSize: 9
+                  font.pixelSize: root.dockFontPx
                   font.bold: true
                   renderType: Text.NativeRendering
                   elide: Text.ElideRight
@@ -714,7 +734,7 @@ BarWidget {
                 text: root.dockBarText(modelData)
                 color: root.dockBarColor(modelData)
                 font.family: root.fontFamily
-                font.pixelSize: 9
+                font.pixelSize: root.dockFontPx
                 renderType: Text.NativeRendering
                 anchors.verticalCenter: parent.verticalCenter
               }
@@ -723,7 +743,7 @@ BarWidget {
               Item {
                 visible: root.showPercent
                 width: 28
-                height: 11
+                height: root.dockLineHeight
                 anchors.verticalCenter: parent.verticalCenter
                 Text {
                   anchors.right: parent.right
@@ -731,7 +751,7 @@ BarWidget {
                   text: modelData.percentInt + "%"
                   color: root.dockPercentColor(modelData)
                   font.family: root.fontFamily
-                  font.pixelSize: 9
+                  font.pixelSize: root.dockFontPx
                   font.bold: modelData.percent >= 0.95 || root.isEventRow(modelData)
                   renderType: Text.NativeRendering
                 }
@@ -741,7 +761,7 @@ BarWidget {
               Item {
                 visible: root.showReset && modelData.resetsShort !== ""
                 width: 34
-                height: 11
+                height: root.dockLineHeight
                 anchors.verticalCenter: parent.verticalCenter
                 Text {
                   anchors.left: parent.left
@@ -749,7 +769,7 @@ BarWidget {
                   text: modelData.resetsShort
                   color: root.muted
                   font.family: root.fontFamily
-                  font.pixelSize: 8
+                  font.pixelSize: root.dockFontPx - 1
                   renderType: Text.NativeRendering
                 }
               }
@@ -1028,6 +1048,35 @@ BarWidget {
     }
   }
 
+  // One numbered choice in a Style & Options selector row.
+  component ChoiceButton: Rectangle {
+    id: choice
+    property string label: ""
+    property bool selected: false
+    signal picked()
+
+    Layout.fillWidth: true
+    height: Style.space(32)
+    radius: root.radiusVal
+    color: choice.selected ? root.accent : root.cardBg
+    border.color: root.cardBorder
+
+    Text {
+      anchors.centerIn: parent
+      text: choice.label
+      color: choice.selected ? "#000000" : root.foreground
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.caption
+      font.bold: true
+    }
+
+    MouseArea {
+      anchors.fill: parent
+      cursorShape: Qt.PointingHandCursor
+      onClicked: choice.picked()
+    }
+  }
+
   // ------------------------------------------------------------- Popup Dialog
   KeyboardPanel {
     id: panel
@@ -1168,7 +1217,7 @@ BarWidget {
 
             Text {
               anchors.centerIn: parent
-              text: "Tracked in Dock (" + root.trackedItems.length + "/2)"
+              text: "Tracked in Dock (" + root.trackedItems.length + "/" + root.maxTracked + ")"
               color: root.activeTab === 0 ? "#000000" : root.foreground
               font.family: root.fontFamily
               font.pixelSize: Style.font.caption
@@ -1234,7 +1283,7 @@ BarWidget {
           foreground: root.foreground
         }
 
-        // Warning banner when user attempts to select more than 2
+        // Warning banner when user attempts to select more than the layout holds
         Rectangle {
           id: warningBanner
           visible: root.selectionWarning !== ""
@@ -1457,7 +1506,8 @@ BarWidget {
                     }
                     Item { Layout.fillWidth: true }
                     Text {
-                      text: root.barStyle.toUpperCase() + " • " + root.barLength + " CHARS"
+                      text: root.barStyle.toUpperCase() + " • " + root.barLength + " CHARS • "
+                        + root.barsPerColumn + "×" + root.columns
                       color: root.muted
                       font.family: root.fontFamily
                       font.pixelSize: Style.font.caption
@@ -1470,51 +1520,62 @@ BarWidget {
                     color: Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.2)
                   }
 
-                  // ASCII Preview Lines
-                  Column {
+                  // ASCII Preview Lines, laid out in the dock's grid and scaled
+                  // down when a wide layout would not fit the popup.
+                  Item {
                     Layout.fillWidth: true
-                    spacing: 4
+                    implicitHeight: previewGrid.implicitHeight * previewGrid.scale
 
-                    Repeater {
-                      model: root.trackedItems
+                    Grid {
+                      id: previewGrid
+                      transformOrigin: Item.TopLeft
+                      scale: Math.min(1, parent.width / Math.max(1, implicitWidth))
+                      flow: Grid.TopToBottom
+                      rows: root.barsPerColumn
+                      rowSpacing: 4
+                      columnSpacing: 16
 
-                      Row {
-                        spacing: 8
-                        required property var modelData
+                      Repeater {
+                        model: root.trackedItems
 
-                        Text {
-                          visible: root.showLabel
-                          text: modelData.shortLabel
-                          color: root.coloredBars ? modelData.color : root.foreground
-                          font.family: root.fontFamily
-                          font.pixelSize: 11
-                          font.bold: true
-                        }
+                        Row {
+                          spacing: 8
+                          required property var modelData
 
-                        Text {
-                          text: root.makeAsciiBar(modelData.percent, root.barLength, root.barStyle)
-                          color: modelData.percent >= 0.95
-                            ? root.urgent
-                            : (root.coloredBars ? modelData.color : root.foreground)
-                          font.family: root.fontFamily
-                          font.pixelSize: 11
-                        }
+                          Text {
+                            visible: root.showLabel
+                            text: modelData.shortLabel
+                            color: root.coloredBars ? modelData.color : root.foreground
+                            font.family: root.fontFamily
+                            font.pixelSize: 11
+                            font.bold: true
+                          }
 
-                        Text {
-                          visible: root.showPercent
-                          text: modelData.percentInt + "%"
-                          color: modelData.percent >= 0.95 ? root.urgent : root.foreground
-                          font.family: root.fontFamily
-                          font.pixelSize: 11
-                          font.bold: modelData.percent >= 0.95
-                        }
+                          Text {
+                            text: root.makeAsciiBar(modelData.percent, root.barLength, root.barStyle)
+                            color: modelData.percent >= 0.95
+                              ? root.urgent
+                              : (root.coloredBars ? modelData.color : root.foreground)
+                            font.family: root.fontFamily
+                            font.pixelSize: 11
+                          }
 
-                        Text {
-                          visible: root.showReset && modelData.resetsFormatted !== ""
-                          text: "(" + modelData.resetsFormatted + ")"
-                          color: root.muted
-                          font.family: root.fontFamily
-                          font.pixelSize: 10
+                          Text {
+                            visible: root.showPercent
+                            text: modelData.percentInt + "%"
+                            color: modelData.percent >= 0.95 ? root.urgent : root.foreground
+                            font.family: root.fontFamily
+                            font.pixelSize: 11
+                            font.bold: modelData.percent >= 0.95
+                          }
+
+                          Text {
+                            visible: root.showReset && modelData.resetsFormatted !== ""
+                            text: "(" + modelData.resetsFormatted + ")"
+                            color: root.muted
+                            font.family: root.fontFamily
+                            font.pixelSize: 10
+                          }
                         }
                       }
                     }
@@ -1543,17 +1604,17 @@ BarWidget {
                   implicitWidth: countBadgeText.implicitWidth + Style.space(14)
                   implicitHeight: Style.space(20)
                   radius: root.radiusVal
-                  color: root.trackedCount >= 2 ? Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.18) : root.cardBg
-                  border.color: root.trackedCount >= 2 ? root.accent : root.cardBorder
+                  color: root.trackedCount >= root.maxTracked ? Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.18) : root.cardBg
+                  border.color: root.trackedCount >= root.maxTracked ? root.accent : root.cardBorder
 
                   Text {
                     id: countBadgeText
                     anchors.centerIn: parent
-                    text: root.trackedCount + " / 2 selected" + (root.trackedCount >= 2 ? " (Max)" : "")
-                    color: root.trackedCount >= 2 ? root.accent : root.muted
+                    text: root.trackedCount + " / " + root.maxTracked + " selected" + (root.trackedCount >= root.maxTracked ? " (Max)" : "")
+                    color: root.trackedCount >= root.maxTracked ? root.accent : root.muted
                     font.family: root.fontFamily
                     font.pixelSize: Style.font.caption
-                    font.bold: root.trackedCount >= 2
+                    font.bold: root.trackedCount >= root.maxTracked
                   }
                 }
               }
@@ -2236,6 +2297,63 @@ BarWidget {
                       cursorShape: Qt.PointingHandCursor
                       onClicked: root.saveSetting("barStyle", modelData.id)
                     }
+                  }
+                }
+              }
+
+              // Dock Layout Selector
+              Text {
+                text: "DOCK LAYOUT (UP TO " + root.maxTracked + " LIMITS):"
+                color: root.muted
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                font.bold: true
+              }
+
+              RowLayout {
+                Layout.fillWidth: true
+                spacing: 6
+
+                Text {
+                  Layout.preferredWidth: Style.space(110)
+                  text: "Bars per column"
+                  color: root.foreground
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.bodySmall
+                }
+
+                Repeater {
+                  model: [1, 2, 3]
+
+                  ChoiceButton {
+                    required property int modelData
+                    label: String(modelData)
+                    selected: root.barsPerColumn === modelData
+                    onPicked: root.saveSetting("barsPerColumn", modelData)
+                  }
+                }
+              }
+
+              RowLayout {
+                Layout.fillWidth: true
+                spacing: 6
+
+                Text {
+                  Layout.preferredWidth: Style.space(110)
+                  text: "Columns"
+                  color: root.foreground
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.bodySmall
+                }
+
+                Repeater {
+                  model: [1, 2, 3, 4]
+
+                  ChoiceButton {
+                    required property int modelData
+                    label: String(modelData)
+                    selected: root.columns === modelData
+                    onPicked: root.saveSetting("columns", modelData)
                   }
                 }
               }
