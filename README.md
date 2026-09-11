@@ -31,7 +31,7 @@ An old-school ASCII progress bar widget for the [Omarchy](https://github.com/oma
   - `ascii`: `[=======>        ]` (Classic CLI arrow)
   - `retro`: `[########--------]` (80s BBS / Retro style)
   - `squares`: `[■■■■■■■■□□□□□□□□]` (Unicode square boxes)
-  - `braille`: `[⣿⣿⣿⣿⣿⣿⣀⣀⣀⣀⣀⣀]` (High-density braille)
+  - `braille`: `[⣿⣿⣷⣀⣀⣀]` (Slim braille; each cell fills dot-by-dot)
 - **🎛️ Interactive Popup Dashboard**:
   - **Live Dock Preview**: Test and view your dock layout in real-time.
   - **Limit Selector**: Easily toggle and select which 2 limits appear in the dock.
