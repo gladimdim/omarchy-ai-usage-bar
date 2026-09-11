@@ -8,6 +8,7 @@ import argparse
 import datetime as dt
 import glob
 import json
+import math
 import os
 import re
 import subprocess
@@ -17,6 +18,13 @@ from typing import Any, Dict, List, Optional
 
 USAGE_DIR = Path(os.path.expanduser("~/.local/state/omarchy/agents/usage"))
 CONFIG_DIR = Path(os.path.expanduser("~/.config/omarchy"))
+
+# Omarchy ships no Grok collector, but the Grok CLI logs the account allowance
+# it fetches for its /usage screen. Reading that log needs no network or auth.
+GROK_HOME = Path(os.path.expanduser("~/.grok"))
+GROK_BILLING_MSG = "billing: fetched credits config"
+GROK_LOG_BLOCK_BYTES = 64 * 1024
+GROK_LOG_SCAN_LIMIT = 32 * 1024 * 1024
 
 PROVIDER_COLORS = {
     "claude": "#D97757",
@@ -225,6 +233,94 @@ def refresh_omarchy_agents() -> None:
     ensure_antigravity_data()
 
 
+def parse_iso(value: Any) -> Optional[dt.datetime]:
+    try:
+        parsed = dt.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=dt.timezone.utc)
+
+
+def iter_lines_reversed(path: Path):
+    """Yield a file's lines last to first, reading at most GROK_LOG_SCAN_LIMIT bytes."""
+    with open(path, "rb") as fp:
+        fp.seek(0, os.SEEK_END)
+        pos = fp.tell()
+        floor = max(0, pos - GROK_LOG_SCAN_LIMIT)
+        tail = b""
+        while pos > floor:
+            step = min(GROK_LOG_BLOCK_BYTES, pos - floor)
+            pos -= step
+            fp.seek(pos)
+            lines = (fp.read(step) + tail).split(b"\n")
+            tail = lines.pop(0)
+            yield from reversed(lines)
+        if pos == 0:
+            yield tail
+
+
+def read_latest_grok_billing() -> Optional[Dict[str, Any]]:
+    """The newest credits config the Grok CLI logged, or None."""
+    try:
+        for raw in iter_lines_reversed(GROK_HOME / "logs" / "unified.jsonl"):
+            if b"creditUsagePercent" not in raw:
+                continue
+            try:
+                entry = json.loads(raw)
+            except ValueError:
+                continue
+            if not isinstance(entry, dict) or entry.get("msg") != GROK_BILLING_MSG:
+                continue
+            ctx = entry.get("ctx")
+            if isinstance(ctx, dict) and isinstance(ctx.get("config"), dict):
+                return entry
+    except OSError:
+        pass
+    return None
+
+
+def grok_usage_record(now: Optional[dt.datetime] = None) -> Optional[Dict[str, Any]]:
+    """Build a usage record in Omarchy's schema from the Grok CLI log."""
+    entry = read_latest_grok_billing()
+    if not entry:
+        return None
+    ctx = entry["ctx"]
+    config = ctx["config"]
+    try:
+        percent = float(config["creditUsagePercent"]) / 100.0
+    except (KeyError, TypeError, ValueError):
+        return None
+    if not math.isfinite(percent):
+        return None
+
+    period = config.get("currentPeriod") if isinstance(config.get("currentPeriod"), dict) else {}
+    start = parse_iso(period.get("start") or config.get("billingPeriodStart"))
+    end = parse_iso(period.get("end") or config.get("billingPeriodEnd"))
+    period_type = str(period.get("type") or "")
+    title = period_type.removeprefix("USAGE_PERIOD_TYPE_").capitalize() or "Credits"
+
+    status = ""
+    now = now or dt.datetime.now(dt.timezone.utc)
+    if end and end <= now:
+        # The window rolled over since the CLI last logged; its credits reset.
+        length = end - start if start and end - start >= dt.timedelta(hours=1) else dt.timedelta(days=7)
+        end += length * ((now - end) // length + 1)
+        percent = 0.0
+        status = "Window reset since Grok CLI last reported usage"
+
+    return {
+        "schemaVersion": 1,
+        "id": "grok",
+        "name": "Grok",
+        "updatedAt": entry.get("ts", ""),
+        "ready": True,
+        "tierLabel": str(ctx.get("subscriptionTier") or ""),
+        "usageStatusText": status,
+        "authHelpText": "Run `grok` to refresh the allowance.",
+        "limits": [{"label": title, "percent": percent, "resetsAt": end.isoformat() if end else ""}],
+    }
+
+
 def collect_all_data() -> Dict[str, Any]:
     ensure_antigravity_data()
 
@@ -234,16 +330,29 @@ def collect_all_data() -> Dict[str, Any]:
     if not USAGE_DIR.exists():
         USAGE_DIR.mkdir(parents=True, exist_ok=True)
 
-    json_files = sorted(glob.glob(str(USAGE_DIR / "*.json")))
-
-    for fpath in json_files:
+    records: List[tuple[str, Dict[str, Any]]] = []
+    for fpath in sorted(glob.glob(str(USAGE_DIR / "*.json"))):
         try:
             with open(fpath, "r", encoding="utf-8") as fp:
                 data = json.load(fp)
         except Exception:
             continue
+        if isinstance(data, dict):
+            records.append((Path(fpath).stem, data))
 
-        prov_id = data.get("id") or Path(fpath).stem
+    # A grok.json from Omarchy itself, should it ever ship one, takes precedence.
+    if not any((data.get("id") or stem) == "grok" for stem, data in records):
+        # The Grok log is another program's internal file: whatever it holds
+        # may cost the Grok panel, never the other providers.
+        try:
+            grok = grok_usage_record()
+        except Exception:
+            grok = None
+        if grok:
+            records.append(("grok", grok))
+
+    for stem, data in records:
+        prov_id = data.get("id") or stem
         prov_name = data.get("name") or prov_id.capitalize()
         tier_label = data.get("tierLabel", "")
         prov_color = PROVIDER_COLORS.get(prov_id, "#38BDF8")

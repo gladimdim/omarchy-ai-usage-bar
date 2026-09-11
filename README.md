@@ -22,7 +22,7 @@ An old-school ASCII progress bar widget for the [Omarchy](https://github.com/oma
 - **⚡ Dual-Limit Tracking**: Track up to **2** different AI limits or providers simultaneously in a compact, two-line stacked HUD layout.
 - **🔍 Auto-Discovery**: Automatically discovers and parses quota and rate-limit data from any installed Omarchy AI provider:
   - **Claude Code**: 5-hour session window, weekly 7-day quota, Fable weekly limits.
-  - **Grok**: Weekly allowance, Grok Build, Grok Chat, Grok Tasks.
+  - **Grok**: Weekly credit allowance and subscription tier (e.g. SuperGrok), read from the Grok CLI's own log.
   - **Google Antigravity**: Thinking Models Quota, Flash Models Quota, Claude 5h Session Window.
   - **OpenAI Codex**, **Fireworks AI**, **OpenCode**, and custom agent integrations.
 - **🎨 6 ASCII Styles**:
@@ -58,6 +58,8 @@ An old-school ASCII progress bar widget for the [Omarchy](https://github.com/oma
 - **`python3`** on `PATH`. The collector (`collect.py`) uses only the standard library — no `pip` packages, no virtualenv.
 
 It makes **no network requests**. Everything it shows is read from the usage JSON Omarchy's own agent integrations already write to `~/.local/state/omarchy/agents/usage/`. To keep that fresh it may run Omarchy's local updater (`~/.config/omarchy/agents/update` or `/usr/share/omarchy/bin/omarchy-agent-usage-update`) and, when the Antigravity usage plugin is installed, that plugin's own scanner — refreshing `antigravity.json` in the directory above. Providers you have not installed simply do not appear.
+
+Omarchy has no Grok integration, so Grok is read straight from the log the Grok CLI keeps at `~/.grok/logs/unified.jsonl`: every time the CLI fetches your credit allowance it logs the usage percentage and the current weekly window. There is nothing to configure — Grok shows up once you have signed in with `grok` and started a session. The figure updates whenever the CLI runs; if the logged window has already ended, the widget shows it as reset. Should Omarchy ever ship its own `grok.json`, that takes precedence.
 
 ---
 
