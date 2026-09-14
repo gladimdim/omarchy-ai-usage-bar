@@ -1084,6 +1084,69 @@ BarWidget {
     }
   }
 
+  // Bars-per-column and side-by-side columns. Lives on the Dock Tracker tab
+  // (where capacity matters) and at the top of Style & Options.
+  component DockLayoutPicker: ColumnLayout {
+    Layout.fillWidth: true
+    spacing: Style.space(8)
+
+    Text {
+      text: "DOCK LAYOUT (UP TO " + root.maxTracked + " LIMITS):"
+      color: root.muted
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.caption
+      font.bold: true
+    }
+
+    RowLayout {
+      Layout.fillWidth: true
+      spacing: 6
+
+      Text {
+        Layout.preferredWidth: Style.space(110)
+        text: "Bars per column"
+        color: root.foreground
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.bodySmall
+      }
+
+      Repeater {
+        model: [1, 2, 3]
+
+        ChoiceButton {
+          required property int modelData
+          label: String(modelData)
+          selected: root.barsPerColumn === modelData
+          onPicked: root.saveSetting("barsPerColumn", modelData)
+        }
+      }
+    }
+
+    RowLayout {
+      Layout.fillWidth: true
+      spacing: 6
+
+      Text {
+        Layout.preferredWidth: Style.space(110)
+        text: "Columns"
+        color: root.foreground
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.bodySmall
+      }
+
+      Repeater {
+        model: [1, 2, 3, 4]
+
+        ChoiceButton {
+          required property int modelData
+          label: String(modelData)
+          selected: root.columns === modelData
+          onPicked: root.saveSetting("columns", modelData)
+        }
+      }
+    }
+  }
+
   // ------------------------------------------------------------- Popup Dialog
   KeyboardPanel {
     id: panel
@@ -1589,6 +1652,8 @@ BarWidget {
                   }
                 }
               }
+
+              DockLayoutPicker {}
 
               // Selector Section Header
               RowLayout {
@@ -2243,6 +2308,8 @@ BarWidget {
               Layout.fillWidth: true
               spacing: Style.space(12)
 
+              DockLayoutPicker {}
+
               Text {
                 text: "ASCII PROGRESS BAR STYLE:"
                 color: root.muted
@@ -2304,63 +2371,6 @@ BarWidget {
                       cursorShape: Qt.PointingHandCursor
                       onClicked: root.saveSetting("barStyle", modelData.id)
                     }
-                  }
-                }
-              }
-
-              // Dock Layout Selector
-              Text {
-                text: "DOCK LAYOUT (UP TO " + root.maxTracked + " LIMITS):"
-                color: root.muted
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
-                font.bold: true
-              }
-
-              RowLayout {
-                Layout.fillWidth: true
-                spacing: 6
-
-                Text {
-                  Layout.preferredWidth: Style.space(110)
-                  text: "Bars per column"
-                  color: root.foreground
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.bodySmall
-                }
-
-                Repeater {
-                  model: [1, 2, 3]
-
-                  ChoiceButton {
-                    required property int modelData
-                    label: String(modelData)
-                    selected: root.barsPerColumn === modelData
-                    onPicked: root.saveSetting("barsPerColumn", modelData)
-                  }
-                }
-              }
-
-              RowLayout {
-                Layout.fillWidth: true
-                spacing: 6
-
-                Text {
-                  Layout.preferredWidth: Style.space(110)
-                  text: "Columns"
-                  color: root.foreground
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.bodySmall
-                }
-
-                Repeater {
-                  model: [1, 2, 3, 4]
-
-                  ChoiceButton {
-                    required property int modelData
-                    label: String(modelData)
-                    selected: root.columns === modelData
-                    onPicked: root.saveSetting("columns", modelData)
                   }
                 }
               }
