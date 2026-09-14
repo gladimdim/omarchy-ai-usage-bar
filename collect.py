@@ -177,7 +177,16 @@ def generate_ascii_bar(percent: float, length: int = 16, style: str = "blocks") 
         return "[" + ("▓" * fill_count) + ("░" * empty_count) + "]"
 
     elif style == "braille":
-        return "[" + ("⣿" * fill_count) + ("⣀" * empty_count) + "]"
+        # One cell = one bar column (braille is 2x4). Fill bottom-up, both
+        # dots of a row together, with the left dot as the in-between step.
+        steps = 6
+        ticks = int(round(clamped * length * steps))
+        full = ticks // steps
+        rem = ticks % steps
+        partials = ["⣄", "⣤", "⣦", "⣶", "⣷"]
+        p_char = partials[rem - 1] if (rem > 0 and full < length) else ""
+        empty = max(0, length - full - (1 if p_char else 0))
+        return "[" + ("⣿" * min(full, length)) + p_char + ("⣀" * empty) + "]"
 
     else:  # blocks (default)
         return "[" + ("█" * fill_count) + ("░" * empty_count) + "]"

@@ -328,7 +328,14 @@ BarWidget {
     } else if (style === "shaded") {
       return "[" + "▓".repeat(fillCount) + "░".repeat(emptyCount) + "]"
     } else if (style === "braille") {
-      return "[" + "⣿".repeat(fillCount) + "⣀".repeat(emptyCount) + "]"
+      var steps = 6
+      var ticks = Math.round(clamped * len * steps)
+      var full = Math.floor(ticks / steps)
+      var rem = ticks % steps
+      var partials = ["⣄", "⣤", "⣦", "⣶", "⣷"]
+      var partial = (rem > 0 && full < len) ? partials[rem - 1] : ""
+      var empty = Math.max(0, len - full - (partial ? 1 : 0))
+      return "[" + "⣿".repeat(Math.min(full, len)) + partial + "⣀".repeat(empty) + "]"
     } else { // blocks (default)
       return "[" + "█".repeat(fillCount) + "░".repeat(emptyCount) + "]"
     }
@@ -2197,7 +2204,7 @@ BarWidget {
                     { id: "ascii", name: "Classic ASCII", sample: "[====>   ]" },
                     { id: "retro", name: "Retro Hash", sample: "[####----]" },
                     { id: "squares", name: "LCD Squares", sample: "[■■■■□□□□]" },
-                    { id: "braille", name: "Slim Braille", sample: "[⣿⣿⣿⣿⣀⣀⣀⣀]" }
+                    { id: "braille", name: "Slim Braille", sample: "[⣿⣿⣶⣀⣀⣀]" }
                   ]
 
                   Rectangle {
