@@ -2268,21 +2268,22 @@ BarWidget {
                                   font.pixelSize: Style.font.caption
                                 }
                                 Item { Layout.fillWidth: true }
-                                // Quick Pin Button
+                                // Same track checkbox as the Dock Tracker rows.
                                 Rectangle {
-                                  width: Style.space(90)
-                                  height: Style.space(22)
+                                  width: Style.space(20)
+                                  height: Style.space(20)
                                   radius: root.radiusVal
-                                  color: root.isLimitTracked(modelData.id) ? root.accent : root.cardBg
-                                  border.color: root.accent
+                                  color: root.isLimitTracked(modelData.id) ? root.accent : "transparent"
+                                  border.color: root.isLimitTracked(modelData.id) ? root.accent : root.muted
+                                  border.width: 1.5
 
                                   Text {
                                     anchors.centerIn: parent
-                                    text: root.isLimitTracked(modelData.id) ? "★ In Dock" : "+ Track"
-                                    color: root.isLimitTracked(modelData.id) ? "#000000" : root.foreground
-                                    font.family: root.fontFamily
-                                    font.pixelSize: 10
+                                    text: "✓"
+                                    color: "#000000"
                                     font.bold: true
+                                    font.pixelSize: 12
+                                    visible: root.isLimitTracked(modelData.id)
                                   }
 
                                   MouseArea {
