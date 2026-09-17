@@ -14,7 +14,7 @@ QtObject {
   property string error: ""
   readonly property var keys: ["tracked", "limitOrder", "barLength", "barStyle",
     "showPercent", "showReset", "showLabel", "coloredBars", "refreshIntervalSec",
-    "barsPerColumn", "columns"]
+    "barsPerColumn", "columns", "adaptiveRowHeight"]
   readonly property var values: readValues()
   readonly property var effectiveSettings: {
     var result = ({})
