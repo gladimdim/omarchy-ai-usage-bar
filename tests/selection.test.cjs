@@ -20,11 +20,21 @@ function widget(selection, maxTracked = 2) {
     trackedItems: [],
     limitsData: { allLimits: [] },
   });
+  context.saveSetting = (key, value) => {
+    context.effectiveSettings[key] = value;
+    if (key === 'tracked') context.trackedSettings = value;
+  };
   context.root = context;
-  vm.runInContext(functionSource('toList') + '\n' + functionSource('updateTrackedItems'), context);
+  vm.runInContext(functionSource('toList') + '\n' + functionSource('updateTrackedItems')
+    + '\n' + functionSource('moveTrackedLimit'), context);
   return {
     refresh(ids) {
       context.limitsData = { allLimits: ids.map(id => ({ id })) };
+      context.updateTrackedItems();
+      return Array.from(context.trackedItems, item => item.id);
+    },
+    move(id, delta) {
+      context.moveTrackedLimit(id, delta);
       context.updateTrackedItems();
       return Array.from(context.trackedItems, item => item.id);
     },
@@ -60,4 +70,19 @@ test('a larger dock layout displays up to its capacity', () => {
 
 test('first-run automatic selection fills a larger layout', () => {
   assert.deepEqual(widget(undefined, 3).refresh(['a', 'b', 'c', 'd']), ['a', 'b', 'c']);
+});
+
+test('tracked limits can be reordered across providers', () => {
+  const w = widget(['codex:5h', 'claude:5h', 'claude:weekly', 'codex:weekly'], 4);
+  w.refresh(['claude:weekly', 'codex:weekly', 'claude:5h', 'codex:5h']);
+  assert.deepEqual(w.move('claude:5h', -1),
+    ['claude:5h', 'codex:5h', 'claude:weekly', 'codex:weekly']);
+  assert.deepEqual(w.move('codex:weekly', -1),
+    ['claude:5h', 'codex:5h', 'codex:weekly', 'claude:weekly']);
+});
+
+test('dock reordering skips unavailable saved limits', () => {
+  const w = widget(['a', 'missing', 'b'], 3);
+  w.refresh(['a', 'b']);
+  assert.deepEqual(w.move('b', -1), ['b', 'a']);
 });
