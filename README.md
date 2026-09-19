@@ -36,7 +36,7 @@ An old-school ASCII progress bar widget for the [Omarchy](https://github.com/oma
   - `braille`: `[⣿⣿⣷⣀⣀⣀]` (Slim braille; each cell fills dot-by-dot)
 - **🎛️ Interactive Popup Dashboard**:
   - **Live Dock Preview**: Test and view your dock layout in real-time.
-  - **Limit Selector**: Easily toggle and select which limits appear in the dock, up to what your dock layout holds. Picking one more than that replaces the oldest selection.
+  - **Limit Selector**: Easily toggle and select which limits appear in the dock, up to what your dock layout holds. Picking one more than that replaces the oldest selection. Reorder the dock sequence directly so providers stay in the rows you prefer.
   - **Collapsible Provider Panels**: Every limit is grouped under its provider. All provider panels start collapsed on both tabs, showing their headline limit and how many limits are pinned to the dock. Click a provider header to expand it, or press `e` to expand/collapse them all.
   - **Arrange Each Panel**: Nudge a limit up or down with the `▲` / `▼` buttons on its row. The order is yours and is remembered (`limitOrder`), and the row you put **first becomes the provider's headline limit** — the one its header reports when the panel is folded, on both tabs. A marker down the left edge shows which row that is. Limits you never move stay in the collector's own order (busiest first), below the ones you arranged.
   - **All Providers Overview**: Detailed status cards with tokens, sessions, reset times, and raw allowance numbers — also grouped into collapsible panels.

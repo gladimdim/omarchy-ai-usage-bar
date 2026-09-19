@@ -384,6 +384,27 @@ BarWidget {
     saveSetting("tracked", trackedList.slice(0, max))
   }
 
+  // Reorder the visible dock sequence without changing the independent order
+  // used by provider panels. Missing limits retain their saved positions.
+  function moveTrackedLimit(limitId, delta) {
+    var visibleIds = []
+    var visible = root.toList(root.trackedItems, [])
+    for (var i = 0; i < visible.length; i++) visibleIds.push(String(visible[i].id))
+
+    var fromVisible = visibleIds.indexOf(String(limitId))
+    var toVisible = fromVisible + delta
+    if (fromVisible === -1 || toVisible < 0 || toVisible >= visibleIds.length) return
+
+    var tracked = root.toList(root.trackedSettings, []).slice(0, root.maxTracked)
+    var from = tracked.indexOf(visibleIds[fromVisible])
+    var to = tracked.indexOf(visibleIds[toVisible])
+    if (from === -1 || to === -1) return
+    var tmp = tracked[from]
+    tracked[from] = tracked[to]
+    tracked[to] = tmp
+    root.saveSetting("tracked", tracked)
+  }
+
   function saveSetting(key, value) {
     // Persist before the shell callback: it may synchronously recreate widgets.
     if (!preferences.save(key, value)) {
@@ -1147,6 +1168,96 @@ BarWidget {
     }
   }
 
+  component DockOrderPicker: ColumnLayout {
+    visible: root.trackedItems.length >= 2
+    Layout.fillWidth: true
+    spacing: Style.space(6)
+
+    Text {
+      text: "DOCK ORDER (TOP TO BOTTOM, THEN NEXT COLUMN):"
+      color: root.muted
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.caption
+      font.bold: true
+    }
+
+    Repeater {
+      model: root.trackedItems
+
+      Rectangle {
+        id: dockOrderRow
+        required property var modelData
+        required property int index
+        readonly property bool canMoveUp: index > 0
+        readonly property bool canMoveDown: index < root.trackedItems.length - 1
+        Layout.fillWidth: true
+        height: Style.space(32)
+        radius: root.radiusVal
+        color: root.cardBg
+        border.color: root.cardBorder
+
+        RowLayout {
+          anchors.fill: parent
+          anchors.leftMargin: Style.space(10)
+          anchors.rightMargin: Style.space(6)
+          spacing: Style.space(8)
+
+          Text {
+            text: (dockOrderRow.index + 1) + "."
+            color: root.muted
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+          }
+          Text {
+            Layout.fillWidth: true
+            text: dockOrderRow.modelData.shortLabel + " — " + dockOrderRow.modelData.title
+            color: root.coloredBars ? dockOrderRow.modelData.color : root.foreground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.bodySmall
+            font.bold: true
+            elide: Text.ElideRight
+          }
+
+          Rectangle {
+            readonly property bool armed: dockOrderRow.canMoveUp
+            width: Style.space(24)
+            height: Style.space(22)
+            radius: root.radiusVal
+            opacity: armed ? 1.0 : 0.25
+            color: upArea.containsMouse && armed ? root.cardHover : "transparent"
+            border.color: root.cardBorder
+            Text { anchors.centerIn: parent; text: "▲"; color: root.muted; font.pixelSize: 9 }
+            MouseArea {
+              id: upArea
+              anchors.fill: parent
+              hoverEnabled: true
+              cursorShape: parent.armed ? Qt.PointingHandCursor : Qt.ArrowCursor
+              onClicked: root.moveTrackedLimit(dockOrderRow.modelData.id, -1)
+            }
+          }
+
+          Rectangle {
+            readonly property bool armed: dockOrderRow.canMoveDown
+            width: Style.space(24)
+            height: Style.space(22)
+            radius: root.radiusVal
+            opacity: armed ? 1.0 : 0.25
+            color: downArea.containsMouse && armed ? root.cardHover : "transparent"
+            border.color: root.cardBorder
+            Text { anchors.centerIn: parent; text: "▼"; color: root.muted; font.pixelSize: 9 }
+            MouseArea {
+              id: downArea
+              anchors.fill: parent
+              hoverEnabled: true
+              cursorShape: parent.armed ? Qt.PointingHandCursor : Qt.ArrowCursor
+              onClicked: root.moveTrackedLimit(dockOrderRow.modelData.id, 1)
+            }
+          }
+        }
+      }
+    }
+  }
+
   // ------------------------------------------------------------- Popup Dialog
   KeyboardPanel {
     id: panel
@@ -1654,6 +1765,8 @@ BarWidget {
               }
 
               DockLayoutPicker {}
+
+              DockOrderPicker {}
 
               // Selector Section Header
               RowLayout {
