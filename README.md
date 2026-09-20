@@ -21,7 +21,7 @@ An old-school ASCII progress bar widget for the [Omarchy](https://github.com/oma
 ## ✨ Features
 
 - **📺 Old-School ASCII Progress Bars**: Displays authentic terminal-style progress bars right in your Omarchy bottom dock.
-- **⚡ Multi-Limit Tracking**: Track several AI limits at once in a compact grid of stacked HUD lines. Choose how many bars stack in each column (1–3) and how many columns sit side by side (1–4) — up to **12** limits. The default is one column of two bars.
+- **⚡ Multi-Limit Tracking**: Track several AI limits at once in a compact grid of stacked HUD lines. Choose how many bars stack in each column (1–3) and how many columns sit side by side (1–4) — up to **12** limits. Optionally let partly filled columns use their spare height. The default is one column of two bars.
 - **🔍 Auto-Discovery**: Automatically discovers and parses quota and rate-limit data from any installed Omarchy AI provider:
   - **Claude Code**: 5-hour session window, weekly 7-day quota, Fable weekly limits.
   - **Grok**: Weekly credit allowance and subscription tier (e.g. SuperGrok), read from the Grok CLI's own log.
@@ -174,6 +174,7 @@ All settings can be tweaked in `~/.config/omarchy/ai-usage-bar.json` or via the 
 | `tracked` | `array` | `["claude:session-5-hour", "grok:weekly"]` | Array of limit IDs to display in dock (up to `barsPerColumn` × `columns`). |
 | `barsPerColumn` | `integer` | `2` | Bars stacked in each dock column (1–3). Rows shrink to fit the bar height. |
 | `columns` | `integer` | `1` | Dock columns placed side by side (1–4). Limits fill each column top to bottom before starting the next. |
+| `adaptiveRowHeight` | `boolean` | `false` | Use the available vertical space in each column independently. For example, the fifth item in a 2×3 layout renders as a full-height line while the first four remain stacked. |
 | `limitOrder` | `array` | `[]` | Limit IDs in the order you arranged them inside their provider panel. Only the providers you rearranged appear; unlisted limits keep the collector's order below them. A provider's **first** ID here is its headline limit. |
 | `barStyle` | `string` | `"blocks"` | ASCII style: `blocks`, `shaded`, `ascii`, `retro`, `squares`, `braille`. |
 | `barLength` | `integer` | `16` | Length of progress bar body in characters (8–32). |
