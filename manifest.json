@@ -39,7 +39,8 @@
       "coloredBars": true,
       "refreshIntervalSec": 60,
       "barsPerColumn": 2,
-      "columns": 1
+      "columns": 1,
+      "adaptiveRowHeight": false
     },
     "schema": [
       {
@@ -107,6 +108,12 @@
         "max": 4,
         "step": 1,
         "defaultValue": 1
+      },
+      {
+        "key": "adaptiveRowHeight",
+        "type": "boolean",
+        "label": "Use Full Height When Space Is Available",
+        "defaultValue": false
       }
     ]
   }

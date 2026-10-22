@@ -78,6 +78,7 @@ BarWidget {
   readonly property bool showReset: Boolean(root.effectiveSettings && root.effectiveSettings.showReset !== undefined ? root.effectiveSettings.showReset : true)
   readonly property bool showLabel: Boolean(root.effectiveSettings && root.effectiveSettings.showLabel !== undefined ? root.effectiveSettings.showLabel : true)
   readonly property bool coloredBars: Boolean(root.effectiveSettings && root.effectiveSettings.coloredBars !== undefined ? root.effectiveSettings.coloredBars : true)
+  readonly property bool adaptiveRowHeight: Boolean(root.effectiveSettings && root.effectiveSettings.adaptiveRowHeight !== undefined ? root.effectiveSettings.adaptiveRowHeight : false)
   readonly property int refreshIntervalSec: Math.max(10, Number(root.effectiveSettings && root.effectiveSettings.refreshIntervalSec !== undefined ? root.effectiveSettings.refreshIntervalSec : 60))
 
   // The order the user arranged the limits into, as limit ids. Only a provider
@@ -567,12 +568,24 @@ BarWidget {
   implicitWidth: dockItem.implicitWidth
   implicitHeight: root.barSize
 
-  // Grid rows share the bar's height, so more rows per column means shorter
-  // lines and smaller glyphs. A single row keeps the roomier one-line size.
-  readonly property int dockLineHeight: root.barsPerColumn === 1
-    ? 14
-    : Math.max(8, Math.min(11, Math.floor((root.barSize - 2) / root.barsPerColumn)))
-  readonly property int dockFontPx: Math.max(7, Math.min(10, root.dockLineHeight - 2))
+  // Rows share their own column's height. In adaptive mode an incomplete
+  // column can use fewer, taller rows than its populated neighbours.
+  function dockLineHeightFor(itemCount) {
+    var rows = root.adaptiveRowHeight ? Math.max(1, Number(itemCount) || 1) : root.barsPerColumn
+    return rows === 1 ? 14 : Math.max(8, Math.min(11, Math.floor((root.barSize - 2) / rows)))
+  }
+
+  function dockFontPxFor(itemCount) {
+    return Math.max(7, Math.min(10, root.dockLineHeightFor(itemCount) - 2))
+  }
+
+  readonly property var dockColumns: {
+    var result = []
+    var items = root.toList(root.trackedItems, [])
+    for (var start = 0; start < items.length; start += root.barsPerColumn)
+      result.push(items.slice(start, start + root.barsPerColumn))
+    return result
+  }
 
   Item {
     id: dockItem
@@ -712,93 +725,110 @@ BarWidget {
         }
       }
 
-      // Grid Mode (2+ limits tracked): `barsPerColumn` rows stacked top to
-      // bottom, overflowing into further columns side by side.
-      Grid {
+      // Multi-column mode: each column normally uses `barsPerColumn` rows.
+      // Adaptive height lets an incomplete column spend its spare vertical
+      // room on larger rows without changing its neighbours.
+      Row {
         id: multiColumn
         visible: root.trackedItems.length >= 2
         anchors.centerIn: parent
-        flow: Grid.TopToBottom
-        rows: root.barsPerColumn
-        rowSpacing: 0
-        columnSpacing: 10
+        spacing: 10
 
         Repeater {
-          model: root.trackedItems
+          model: root.dockColumns
 
           Item {
-            id: lineItem
+            id: dockColumn
             required property var modelData
-            implicitWidth: lineRow.implicitWidth
-            implicitHeight: root.dockLineHeight
+            implicitWidth: columnLines.implicitWidth
+            implicitHeight: root.barSize
+            readonly property int lineHeight: root.dockLineHeightFor(modelData.length)
+            readonly property int fontPx: root.dockFontPxFor(modelData.length)
 
-            Row {
-              id: lineRow
-              spacing: 4
-              anchors.verticalCenter: parent.verticalCenter
+            Column {
+              id: columnLines
+              anchors.centerIn: parent
+              spacing: 0
 
-              // Provider short label with fixed alignment
-              Item {
-                visible: root.showLabel
-                width: 68
-                height: root.dockLineHeight
-                anchors.verticalCenter: parent.verticalCenter
-                Text {
-                  anchors.left: parent.left
-                  anchors.verticalCenter: parent.verticalCenter
-                  text: modelData.shortLabel
-                  color: root.dockLabelColor(modelData)
-                  font.family: root.fontFamily
-                  font.pixelSize: root.dockFontPx
-                  font.bold: true
-                  renderType: Text.NativeRendering
-                  elide: Text.ElideRight
-                  width: parent.width
-                }
-              }
+              Repeater {
+                model: dockColumn.modelData
 
-              // ASCII progress bar
-              Text {
-                text: root.dockBarText(modelData)
-                color: root.dockBarColor(modelData)
-                font.family: root.fontFamily
-                font.pixelSize: root.dockFontPx
-                renderType: Text.NativeRendering
-                anchors.verticalCenter: parent.verticalCenter
-              }
+                Item {
+                  id: lineItem
+                  required property var modelData
+                  implicitWidth: lineRow.implicitWidth
+                  implicitHeight: dockColumn.lineHeight
 
-              // Percentage with right alignment
-              Item {
-                visible: root.showPercent
-                width: 28
-                height: root.dockLineHeight
-                anchors.verticalCenter: parent.verticalCenter
-                Text {
-                  anchors.right: parent.right
-                  anchors.verticalCenter: parent.verticalCenter
-                  text: modelData.percentInt + "%"
-                  color: root.dockPercentColor(modelData)
-                  font.family: root.fontFamily
-                  font.pixelSize: root.dockFontPx
-                  font.bold: modelData.percent >= 0.95 || root.isEventRow(modelData)
-                  renderType: Text.NativeRendering
-                }
-              }
+                  Row {
+                    id: lineRow
+                    spacing: 4
+                    anchors.verticalCenter: parent.verticalCenter
 
-              // Reset countdown
-              Item {
-                visible: root.showReset && modelData.resetsShort !== ""
-                width: 34
-                height: root.dockLineHeight
-                anchors.verticalCenter: parent.verticalCenter
-                Text {
-                  anchors.left: parent.left
-                  anchors.verticalCenter: parent.verticalCenter
-                  text: modelData.resetsShort
-                  color: root.muted
-                  font.family: root.fontFamily
-                  font.pixelSize: root.dockFontPx - 1
-                  renderType: Text.NativeRendering
+                    // Provider short label with fixed alignment
+                    Item {
+                      visible: root.showLabel
+                      width: 68
+                      height: dockColumn.lineHeight
+                      anchors.verticalCenter: parent.verticalCenter
+                      Text {
+                        anchors.left: parent.left
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: lineItem.modelData.shortLabel
+                        color: root.dockLabelColor(lineItem.modelData)
+                        font.family: root.fontFamily
+                        font.pixelSize: dockColumn.fontPx
+                        font.bold: true
+                        renderType: Text.NativeRendering
+                        elide: Text.ElideRight
+                        width: parent.width
+                      }
+                    }
+
+                    // ASCII progress bar
+                    Text {
+                      text: root.dockBarText(lineItem.modelData)
+                      color: root.dockBarColor(lineItem.modelData)
+                      font.family: root.fontFamily
+                      font.pixelSize: dockColumn.fontPx
+                      renderType: Text.NativeRendering
+                      anchors.verticalCenter: parent.verticalCenter
+                    }
+
+                    // Percentage with right alignment
+                    Item {
+                      visible: root.showPercent
+                      width: 28
+                      height: dockColumn.lineHeight
+                      anchors.verticalCenter: parent.verticalCenter
+                      Text {
+                        anchors.right: parent.right
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: lineItem.modelData.percentInt + "%"
+                        color: root.dockPercentColor(lineItem.modelData)
+                        font.family: root.fontFamily
+                        font.pixelSize: dockColumn.fontPx
+                        font.bold: lineItem.modelData.percent >= 0.95 || root.isEventRow(lineItem.modelData)
+                        renderType: Text.NativeRendering
+                      }
+                    }
+
+                    // Reset countdown
+                    Item {
+                      visible: root.showReset && lineItem.modelData.resetsShort !== ""
+                      width: 34
+                      height: dockColumn.lineHeight
+                      anchors.verticalCenter: parent.verticalCenter
+                      Text {
+                        anchors.left: parent.left
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: lineItem.modelData.resetsShort
+                        color: root.muted
+                        font.family: root.fontFamily
+                        font.pixelSize: dockColumn.fontPx - 1
+                        renderType: Text.NativeRendering
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -1164,6 +1194,40 @@ BarWidget {
           selected: root.columns === modelData
           onPicked: root.saveSetting("columns", modelData)
         }
+      }
+    }
+
+    Rectangle {
+      Layout.fillWidth: true
+      height: Style.space(36)
+      radius: root.radiusVal
+      color: root.cardBg
+      border.color: root.cardBorder
+
+      RowLayout {
+        anchors.fill: parent
+        anchors.margins: Style.space(8)
+
+        Text {
+          text: "Use full height when space is available"
+          color: root.foreground
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.bodySmall
+        }
+        Item { Layout.fillWidth: true }
+        Text {
+          text: root.adaptiveRowHeight ? "[ ON ]" : "[ OFF ]"
+          color: root.adaptiveRowHeight ? root.accent : root.muted
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+          font.bold: true
+        }
+      }
+
+      MouseArea {
+        anchors.fill: parent
+        cursorShape: Qt.PointingHandCursor
+        onClicked: root.saveSetting("adaptiveRowHeight", !root.adaptiveRowHeight)
       }
     }
   }
@@ -1701,61 +1765,77 @@ BarWidget {
                     color: Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.2)
                   }
 
-                  // ASCII Preview Lines, laid out in the dock's grid and scaled
+                  // ASCII preview, grouped exactly like the dock and scaled
                   // down when a wide layout would not fit the popup.
                   Item {
                     Layout.fillWidth: true
                     implicitHeight: previewGrid.implicitHeight * previewGrid.scale
 
-                    Grid {
+                    Row {
                       id: previewGrid
                       transformOrigin: Item.TopLeft
                       scale: Math.min(1, parent.width / Math.max(1, implicitWidth))
-                      flow: Grid.TopToBottom
-                      rows: root.barsPerColumn
-                      rowSpacing: 4
-                      columnSpacing: 16
+                      spacing: 16
 
                       Repeater {
-                        model: root.trackedItems
+                        model: root.dockColumns
 
-                        Row {
-                          spacing: 8
+                        Item {
+                          id: previewColumn
                           required property var modelData
+                          implicitWidth: previewColumnLines.implicitWidth
+                          implicitHeight: root.barSize
+                          readonly property int previewFontPx: root.dockFontPxFor(modelData.length)
 
-                          Text {
-                            visible: root.showLabel
-                            text: modelData.shortLabel
-                            color: root.coloredBars ? modelData.color : root.foreground
-                            font.family: root.fontFamily
-                            font.pixelSize: 11
-                            font.bold: true
-                          }
+                          Column {
+                            id: previewColumnLines
+                            anchors.centerIn: parent
+                            spacing: 4
 
-                          Text {
-                            text: root.makeAsciiBar(modelData.percent, root.barLength, root.barStyle)
-                            color: modelData.percent >= 0.95
-                              ? root.urgent
-                              : (root.coloredBars ? modelData.color : root.foreground)
-                            font.family: root.fontFamily
-                            font.pixelSize: 11
-                          }
+                            Repeater {
+                              model: previewColumn.modelData
 
-                          Text {
-                            visible: root.showPercent
-                            text: modelData.percentInt + "%"
-                            color: modelData.percent >= 0.95 ? root.urgent : root.foreground
-                            font.family: root.fontFamily
-                            font.pixelSize: 11
-                            font.bold: modelData.percent >= 0.95
-                          }
+                              Row {
+                                id: previewLine
+                                spacing: 8
+                                required property var modelData
 
-                          Text {
-                            visible: root.showReset && modelData.resetsFormatted !== ""
-                            text: "(" + modelData.resetsFormatted + ")"
-                            color: root.muted
-                            font.family: root.fontFamily
-                            font.pixelSize: 10
+                                Text {
+                                  visible: root.showLabel
+                                  text: previewLine.modelData.shortLabel
+                                  color: root.coloredBars ? previewLine.modelData.color : root.foreground
+                                  font.family: root.fontFamily
+                                  font.pixelSize: previewColumn.previewFontPx
+                                  font.bold: true
+                                }
+
+                                Text {
+                                  text: root.makeAsciiBar(previewLine.modelData.percent, root.barLength, root.barStyle)
+                                  color: previewLine.modelData.percent >= 0.95
+                                    ? root.urgent
+                                    : (root.coloredBars ? previewLine.modelData.color : root.foreground)
+                                  font.family: root.fontFamily
+                                  font.pixelSize: previewColumn.previewFontPx
+                                }
+
+                                Text {
+                                  visible: root.showPercent
+                                  text: previewLine.modelData.percentInt + "%"
+                                  color: previewLine.modelData.percent >= 0.95 ? root.urgent : root.foreground
+                                  font.family: root.fontFamily
+                                  font.pixelSize: previewColumn.previewFontPx
+                                  font.bold: previewLine.modelData.percent >= 0.95
+                                }
+
+                                Text {
+                                  visible: root.showReset && previewLine.modelData.resetsFormatted !== ""
+                                  text: "(" + previewLine.modelData.resetsFormatted + ")"
+                                  color: root.muted
+                                  font.family: root.fontFamily
+                                  font.pixelSize: Math.max(8, previewColumn.previewFontPx - 1)
+                                }
+                              }
+                            }
                           }
                         }
                       }
