@@ -146,10 +146,10 @@ class ShortLabelTest(unittest.TestCase):
         self.assertEqual(collect.make_short_label("minimax-plan", "General 4 Hour", "MiniMax"), "MiniMax 4h")
         self.assertEqual(collect.make_short_label("claude-max", "Claude 7 Day (Fable)", "Claude"), "Claude Fbl")
 
-    def test_account_suffix_tells_two_accounts_apart(self):
+    def test_account_leads_the_label_so_a_cut_keeps_it(self):
         first = collect.make_short_label("claude-max", "Claude 7 Day · josh", "Claude")
         second = collect.make_short_label("claude-max", "Claude 7 Day · joshuawarren", "Claude")
-        self.assertEqual((first, second), ("Claude Wk josh", "Claude Wk joshu"))
+        self.assertEqual((first, second), ("josh Wk", "joshu Wk"))
 
 
 if __name__ == "__main__":

@@ -87,10 +87,13 @@ def format_relative_time(resets_at_str: Optional[str]) -> tuple[str, str]:
 def make_short_label(provider_id: str, limit_title: str, provider_name: str = "") -> str:
     p_short = PROVIDER_SHORT_NAMES.get(provider_id) or provider_name or provider_id.capitalize()
     # A collector that keeps several accounts of one provider apart titles each
-    # window "<window> · <account>"; the account tells the dock lines apart.
+    # window "<window> · <account>". The dock cuts a long label, so the account
+    # leads: it is the part that tells the lines apart.
     window_title, _, account = limit_title.partition(" · ")
-    label = _window_label(p_short, window_title)
-    return f"{label} {account.strip()[:5]}" if account.strip() else label
+    account = account.strip()
+    if account:
+        return f"{account[:5]} {_window_label('', window_title).strip()}".strip()
+    return _window_label(p_short, window_title)
 
 
 def _window_label(p_short: str, limit_title: str) -> str:
