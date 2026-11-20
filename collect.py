@@ -90,7 +90,7 @@ def make_short_label(provider_id: str, limit_title: str, provider_name: str = ""
     # window "<window> · <account>"; the account tells the dock lines apart.
     window_title, _, account = limit_title.partition(" · ")
     label = _window_label(p_short, window_title)
-    return f"{label} {account.strip()[:6]}" if account.strip() else label
+    return f"{label} {account.strip()[:5]}" if account.strip() else label
 
 
 def _window_label(p_short: str, limit_title: str) -> str:

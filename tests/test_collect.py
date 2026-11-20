@@ -144,12 +144,12 @@ class ShortLabelTest(unittest.TestCase):
     def test_unknown_provider_uses_the_record_name(self):
         self.assertEqual(collect.make_short_label("zai-plan", "ZAI 5 Hours Token Quota", "z.ai"), "z.ai 5h")
         self.assertEqual(collect.make_short_label("minimax-plan", "General 4 Hour", "MiniMax"), "MiniMax 4h")
-        self.assertEqual(collect.make_short_label("claude-max", "Claude 7 Day (Fable)", "Claude Max"), "Claude Max Fbl")
+        self.assertEqual(collect.make_short_label("claude-max", "Claude 7 Day (Fable)", "Claude"), "Claude Fbl")
 
     def test_account_suffix_tells_two_accounts_apart(self):
-        first = collect.make_short_label("claude-max", "Claude 7 Day · josh", "Claude Max")
-        second = collect.make_short_label("claude-max", "Claude 7 Day · joshuawarren", "Claude Max")
-        self.assertEqual((first, second), ("Claude Max Wk josh", "Claude Max Wk joshua"))
+        first = collect.make_short_label("claude-max", "Claude 7 Day · josh", "Claude")
+        second = collect.make_short_label("claude-max", "Claude 7 Day · joshuawarren", "Claude")
+        self.assertEqual((first, second), ("Claude Wk josh", "Claude Wk joshu"))
 
 
 if __name__ == "__main__":
