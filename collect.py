@@ -84,8 +84,19 @@ def format_relative_time(resets_at_str: Optional[str]) -> tuple[str, str]:
         return ("", "")
 
 
-def make_short_label(provider_id: str, limit_title: str) -> str:
-    p_short = PROVIDER_SHORT_NAMES.get(provider_id, provider_id.capitalize())
+def make_short_label(provider_id: str, limit_title: str, provider_name: str = "") -> str:
+    p_short = PROVIDER_SHORT_NAMES.get(provider_id) or provider_name or provider_id.capitalize()
+    # A collector that keeps several accounts of one provider apart titles each
+    # window "<window> · <account>". The dock cuts a long label, so the account
+    # leads: it is the part that tells the lines apart.
+    window_title, _, account = limit_title.partition(" · ")
+    account = account.strip()
+    if account:
+        return f"{account[:5]} {_window_label('', window_title).strip()}".strip()
+    return _window_label(p_short, window_title)
+
+
+def _window_label(p_short: str, limit_title: str) -> str:
     t_lower = limit_title.lower()
 
     if "session" in t_lower or "5-hour" in t_lower or "5h" in t_lower:
@@ -104,6 +115,11 @@ def make_short_label(provider_id: str, limit_title: str) -> str:
         return f"{p_short} Task"
     if "fable" in t_lower:
         return f"{p_short} Fbl"
+    hours = re.search(r"\b(\d+) hours?\b", t_lower)
+    if hours:
+        return f"{p_short} {hours.group(1)}h"
+    if "7 day" in t_lower:
+        return f"{p_short} Wk"
 
     words = limit_title.split()
     if words:
@@ -381,7 +397,7 @@ def collect_all_data() -> Dict[str, Any]:
             resets_at = lim.get("resetsAt", "")
             resets_long, resets_short = format_relative_time(resets_at)
 
-            short_label = make_short_label(prov_id, title)
+            short_label = make_short_label(prov_id, title, prov_name)
             limit_color = lim.get("color") or prov_color
 
             used = lim.get("used")
