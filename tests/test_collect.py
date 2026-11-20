@@ -137,5 +137,20 @@ class GrokCollectorTest(unittest.TestCase):
         self.assertEqual([p["id"] for p in data["providers"]], ["claude"])
 
 
+class ShortLabelTest(unittest.TestCase):
+    def test_known_provider_keeps_its_short_name(self):
+        self.assertEqual(collect.make_short_label("claude", "Session (5-hour)", "Claude"), "Claude 5h")
+
+    def test_unknown_provider_uses_the_record_name(self):
+        self.assertEqual(collect.make_short_label("zai-plan", "ZAI 5 Hours Token Quota", "z.ai"), "z.ai 5h")
+        self.assertEqual(collect.make_short_label("minimax-plan", "General 4 Hour", "MiniMax"), "MiniMax 4h")
+        self.assertEqual(collect.make_short_label("claude-max", "Claude 7 Day (Fable)", "Claude Max"), "Claude Max Fbl")
+
+    def test_account_suffix_tells_two_accounts_apart(self):
+        first = collect.make_short_label("claude-max", "Claude 7 Day · josh", "Claude Max")
+        second = collect.make_short_label("claude-max", "Claude 7 Day · joshuawarren", "Claude Max")
+        self.assertEqual((first, second), ("Claude Max Wk josh", "Claude Max Wk joshua"))
+
+
 if __name__ == "__main__":
     unittest.main()
